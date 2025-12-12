@@ -17,6 +17,7 @@ buildNumber.properties
 .classpath
 
 # Misc
+*.jks
 *.db
 *.p12
 *.pem
