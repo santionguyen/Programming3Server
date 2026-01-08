@@ -9,7 +9,10 @@
             "name": "Current File",
             "request": "launch",
             "mainClass": "${file}",
-            "args": "/path/to/keystore.jks keystore-password"
+            "args": "/path/to/keystore.jks keystore-password",
+            "env": {
+                "DATABASE_PATH": "/path/to/database.db"
+            }
         },
         {
             "type": "java",
@@ -17,7 +20,10 @@
             "request": "launch",
             "mainClass": "com.o3.server.Server",
             "projectName": "server",
-            "args": "/path/to/keystore.jks keystore-password"
+            "args": "/path/to/keystore.jks keystore-password",
+            "env": {
+                "DATABASE_PATH": "/path/to/database.db"
+            }
         }
     ]
 }
