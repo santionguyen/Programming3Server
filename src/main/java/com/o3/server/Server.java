@@ -10,7 +10,7 @@ import java.util.stream.Collectors;
 
 public class Server implements HttpHandler {
 
-    // Storage for messages 
+    // Storage for mmessages
     private List<String> messages = new ArrayList<>();
 
     private Server() {
@@ -60,7 +60,7 @@ public class Server implements HttpHandler {
             responseString = String.join("\n", messages);
         }
 
-        // 3. Get bytes (UTF-8) and send headers
+        // 3. Get bytes (UTF-8) and send headers...
         byte[] bytes = responseString.getBytes(StandardCharsets.UTF_8);
         exchange.sendResponseHeaders(200, bytes.length);
 
@@ -73,12 +73,12 @@ public class Server implements HttpHandler {
         outputStream.close();
     }
 
-    // Handling Other requests 
+    // Handling other requests 
     private void handleOther(HttpExchange exchange) throws IOException {
         String response = "Not supported";
         byte[] bytes = response.getBytes(StandardCharsets.UTF_8);
         
-        // Return 400 Bad Request [cite: 626]
+        // Return 400 Bad Request
         exchange.sendResponseHeaders(400, bytes.length);
         OutputStream outputStream = exchange.getResponseBody();
         outputStream.write(bytes);
@@ -88,7 +88,7 @@ public class Server implements HttpHandler {
     public static void main(String[] args) throws Exception {
         HttpServer server = HttpServer.create(new InetSocketAddress(8001), 0);
         
-        // IMPORTANT: Changed path from "/help" to "/datarecord" to match
+        // Notes: Changed path from "/help" to "/datarecord" to match
         server.createContext("/datarecord", new Server());
         
         server.setExecutor(null);
