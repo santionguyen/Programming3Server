@@ -4,95 +4,96 @@ import com.sun.net.httpserver.*;
 import java.io.*;
 import java.net.InetSocketAddress;
 import java.nio.charset.StandardCharsets;
+import java.security.KeyStore;
+import javax.net.ssl.*;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.concurrent.ExecutionException;
 import java.util.stream.Collectors;
 
 public class Server implements HttpHandler {
+    public List<String> messages = new ArrayList<>();
+    //Helper to create SSL context
+    private static SSLContext myServerSSLContext (String file, String pass) throws Exception{
+        char[] passphrase = pass.toCharArray();
+        KeyStore ks = KeyStore.getInstance("JKS");
+        ks.load(new FileInputStream(file), passphrase);
 
-    // Storage for mmessages
-    private List<String> messages = new ArrayList<>();
-
-    private Server() {
+        KeyManagerFactory kmf = KeyManagerFactory.getInstance("SunX509");
+        kmf.init(ks,passphrase);
+        TrustManagerFactory tmf = TrustManagerFactory.getInstance("SunX509");
+        tmf.init(ks);
+        SSLContext ssl = SSLContext.getInstance("TLS");
+        ssl.init(kmf.getKeyManagers(), tmf.getTrustManagers(),null);
+        return ssl;
     }
-
     @Override
-    public void handle(HttpExchange exchange) throws IOException {
-        // Implement handle() function structure 
+        public void handle(HttpExchange exchange) throws IOException {
         if (exchange.getRequestMethod().equalsIgnoreCase("POST")) {
-            handlePost(exchange);
+            InputStream stream = exchange.getRequestBody();
+            String text = new BufferedReader(new InputStreamReader(stream, StandardCharsets.UTF_8))
+                    .lines()
+                    .collect(Collectors.joining("\n"));
+            if (!text.isEmpty()) {
+                messages.add(text);
+            }
+            stream.close();
+            exchange.sendResponseHeaders(200, -1);
         } else if (exchange.getRequestMethod().equalsIgnoreCase("GET")) {
-            handleGet(exchange);
+            String responseString = messages.isEmpty() ? "No messages" : String.join("\n", messages);
+            byte[] bytes = responseString.getBytes(StandardCharsets.UTF_8);
+            exchange.sendResponseHeaders(200, bytes.length);
+            OutputStream os = exchange.getResponseBody();
+            os.write(bytes);
+            os.close();
         } else {
-            handleOther(exchange);
+            exchange.sendResponseHeaders(400, -1);
         }
     }
-
-    // Handling POST requests 
-    private void handlePost(HttpExchange exchange) throws IOException {
-        // 1. Get the request body input stream
-        InputStream stream = exchange.getRequestBody();
-
-        // 2. Read the text from the body 
-        String text = new BufferedReader(new InputStreamReader(stream, StandardCharsets.UTF_8))
-                .lines()
-                .collect(Collectors.joining("\n"));
-
-        // 3. Store the text 
-        if (!text.isEmpty()) {
-            messages.add(text);
+public static void main (String [] args){
+    try{
+        //handle keystore and password (step 10)
+        String keystoreFile = "keystore.jks"; // default for local testing
+        String password = "password";
+        if (args.length >=2 ){
+            keystoreFile = args[0];
+            password = args[1];
         }
-        stream.close();
+        // Create HTTPS Server
+        HttpsServer server = HttpsServer.create(new InetSocketAddress(8001), 0);
 
-        // 4. Send response headers
-        exchange.sendResponseHeaders(200, -1);
-    }
+        // configure SSL
+        SSLContext sslContext = myServerSSLContext(keystoreFile, password);
+        server.setHttpsConfigurator(new HttpsConfigurator(sslContext){
+            public void configure(HttpsParameters params){
+                try{
+                    SSLContext c = getSSLContext();
+                    SSLEngine engine = c.createSSLEngine();
+                    params.setNeedClientAuth(false);
+                    params.setCipherSuites(engine.getEnabledCipherSuites());
+                    params.setProtocols(engine.getEnabledProtocols());
+                    SSLParameters sslparams = c.getDefaultSSLParameters();
+                    params.setSSLParameters(sslparams);
 
-    // Handling GET requests 
-    private void handleGet(HttpExchange exchange) throws IOException {
-        String responseString;
-
-        // Create response string from stored messages 
-        if (messages.isEmpty()) {
-            responseString = "No messages"; // 
-        } else {
-            // Join all messages with a newline to return them
-            responseString = String.join("\n", messages);
-        }
-
-        // 3. Get bytes (UTF-8) and send headers...
-        byte[] bytes = responseString.getBytes(StandardCharsets.UTF_8);
-        exchange.sendResponseHeaders(200, bytes.length);
-
-        // 4. Write response body 
-        OutputStream outputStream = exchange.getResponseBody();
-        outputStream.write(bytes);
-        
-        // 5. Flush and close 
-        outputStream.flush();
-        outputStream.close();
-    }
-
-    // Handling other requests 
-    private void handleOther(HttpExchange exchange) throws IOException {
-        String response = "Not supported";
-        byte[] bytes = response.getBytes(StandardCharsets.UTF_8);
-        
-        // Return 400 Bad Request
-        exchange.sendResponseHeaders(400, bytes.length);
-        OutputStream outputStream = exchange.getResponseBody();
-        outputStream.write(bytes);
-        outputStream.close();
-    }
-
-    public static void main(String[] args) throws Exception {
-        HttpServer server = HttpServer.create(new InetSocketAddress(8001), 0);
-        
-        // Notes: Changed path from "/help" to "/datarecord" to match
-        server.createContext("/datarecord", new Server());
-        
+                }catch (Exception ex){
+                    System.out.println("Failed to create https port");
+                }
+            }
+        });
+        // Create authentificator
+        UserAuthenticator authenticator = new UserAuthenticator("datarecord");
+        // Setup datarecord with authentication 
+        HttpContext context = server.createContext("/datarecord", new Server());
+        context.setAuthenticator(authenticator);
+        server.createContext("/registration", new RegistrationHandler(authenticator));
         server.setExecutor(null);
         server.start();
-        System.out.println("Server started on port 8001");
+        System.out.println("HTTPS Server has started on port 8001");
+        } catch (Exception e) {
+            e.printStackTrace();
+        }
+        
     }
 }
+
+    
