@@ -1,10 +1,11 @@
 package com.o3.server;
-
 import com.sun.net.httpserver.HttpExchange;
 import com.sun.net.httpserver.HttpHandler;
 import java.io.*;
 import java.nio.charset.StandardCharsets;
 import java.util.stream.Collectors;
+import org.json.JSONObject;
+import org.json.JSONException;
 
 public class RegistrationHandler implements HttpHandler{
     private UserAuthenticator auth;
@@ -22,25 +23,33 @@ public class RegistrationHandler implements HttpHandler{
                     .collect(Collectors.joining("\n"));
             stream.close();
 
-        // Parse "username.password"
-        String[] parts = text.split(":");
-        if (parts.length == 2 && !parts[0].isEmpty() && !parts[1].isEmpty()) {
-            String newUser = parts[0];
-            String newPass = parts[1];
-            boolean success = auth.addUser(newUser, newPass);
-            if(success){
+        // Parse JSON inside a try-catch block
+        try{
+            JSONObject jsonUser = new JSONObject(text);
+            //Extract the fields
+            String username = jsonUser.getString("username");
+            String password = jsonUser.getString("password");
+            String email = jsonUser.getString("email");
+            //Create the new User Object
+            User newUser = new User(username, password, email);
+            // add to Authenticor
+            boolean success = auth.addUser(newUser);
+            if (success){
                 sendResponse(exchange, 200, "User registered!");
-            }else{
-                sendResponse(exchange, 403, "User already exists");
+            } else{
+                sendResponse(exchange, 403, "User already exists!");
             }
-        }else{
-                sendResponse(exchange, 400, "Invalid format. Must use username:password");
-            } 
-        }else {
-            // reject other methods
-            sendResponse(exchange, 405, "Not Supported!");
+        }catch (JSONException e){
+            //handle bad JSON or missing fields
+            System.out.println("Registration failed: " + e.getMessage());
+            sendResponse(exchange, 400, "Invalid JSON: " + e.getMessage());
         }
+    } else {
+        //reject other methods
+        sendResponse(exchange, 405, "Not supported!");
     }
+}
+
     private void sendResponse(HttpExchange exchange, int code, String message) throws IOException{
         byte[] bytes = message.getBytes(StandardCharsets.UTF_8);
         exchange.sendResponseHeaders(code, bytes.length);

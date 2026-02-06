@@ -11,8 +11,13 @@ import java.util.List;
 import java.util.concurrent.ExecutionException;
 import java.util.stream.Collectors;
 
+//week 3 updated ports
+import org.json.JSONArray;
+import org.json.JSONException;
+import org.json.JSONObject;
+
 public class Server implements HttpHandler {
-    public List<String> messages = new ArrayList<>();
+    public List<ObservationRecord> messages = new ArrayList<>();
     //Helper to create SSL context
     private static SSLContext myServerSSLContext (String file, String pass) throws Exception{
         char[] passphrase = pass.toCharArray();
@@ -28,28 +33,66 @@ public class Server implements HttpHandler {
         return ssl;
     }
     @Override
-        public void handle(HttpExchange exchange) throws IOException {
+    public void handle(HttpExchange exchange) throws IOException {
         if (exchange.getRequestMethod().equalsIgnoreCase("POST")) {
             InputStream stream = exchange.getRequestBody();
             String text = new BufferedReader(new InputStreamReader(stream, StandardCharsets.UTF_8))
                     .lines()
                     .collect(Collectors.joining("\n"));
-            if (!text.isEmpty()) {
-                messages.add(text);
-            }
             stream.close();
-            exchange.sendResponseHeaders(200, -1);
+            try {
+                // Parse the incoming text as json object
+                JSONObject jsonMsg = new JSONObject(text);
+                // convert to ObservationRecord
+                ObservationRecord newRecord = new ObservationRecord(jsonMsg);
+                
+                if (newRecord.isValid()) {
+                    messages.add(newRecord);
+                    exchange.sendResponseHeaders(200, -1);
+                } else {
+                    sendResponse(exchange, 400, "Missing orbital elements or state_vector");
+                }
+
+            } catch (JSONException e) {
+                sendResponse(exchange, 400, "Invalid JSON format");
+            }
+
         } else if (exchange.getRequestMethod().equalsIgnoreCase("GET")) {
-            String responseString = messages.isEmpty() ? "No messages" : String.join("\n", messages);
-            byte[] bytes = responseString.getBytes(StandardCharsets.UTF_8);
-            exchange.sendResponseHeaders(200, bytes.length);
-            OutputStream os = exchange.getResponseBody();
-            os.write(bytes);
-            os.close();
+
+            if (messages.isEmpty()) {
+                exchange.sendResponseHeaders(204, -1);
+            } else {
+                // create json array
+                JSONArray responseArray = new JSONArray();
+                
+                for (ObservationRecord record : messages) {
+                    responseArray.put(record.toJSON());
+                }
+                
+                String responseString = responseArray.toString();
+                byte[] bytes = responseString.getBytes(StandardCharsets.UTF_8);
+                
+                exchange.getResponseHeaders().add("Content-Type", "application/json");
+                exchange.sendResponseHeaders(200, bytes.length);
+
+                OutputStream os = exchange.getResponseBody();
+                os.write(bytes);
+                os.close();
+            } 
+            
         } else {
-            exchange.sendResponseHeaders(400, -1);
+            exchange.sendResponseHeaders(405, -1);
         }
     }
+    //Helper method to send simple text responses
+    private void sendResponse(HttpExchange exchange, int code, String message) throws IOException {
+        byte[] bytes = message.getBytes(StandardCharsets.UTF_8);
+        exchange.sendResponseHeaders(code, bytes.length);
+        OutputStream os = exchange.getResponseBody();
+        os.write(bytes);
+        os.close();
+    }
+
 public static void main (String [] args){
     try{
         //handle keystore and password (step 10)
@@ -82,10 +125,12 @@ public static void main (String [] args){
         });
         // Create authentificator
         UserAuthenticator authenticator = new UserAuthenticator("datarecord");
-        // Setup datarecord with authentication 
+        // Setup registration 
+        server.createContext("/registration", new RegistrationHandler(authenticator));
+        // Setup Datarecord Path
         HttpContext context = server.createContext("/datarecord", new Server());
         context.setAuthenticator(authenticator);
-        server.createContext("/registration", new RegistrationHandler(authenticator));
+        // Start server
         server.setExecutor(null);
         server.start();
         System.out.println("HTTPS Server has started on port 8001");
