@@ -18,9 +18,8 @@ public class ObservationRecord {
     private String id;
     private long recordTimeReceived;
     private String recordOwner;
-    private String recordPayload; 
 
-    // Constructor: Parse JSON 
+    // Constructor
     public ObservationRecord(JSONObject json) {
         this.targetBodyName = json.optString("target_body_name", null);
         this.centerBodyName = json.optString("center_body_name", null);
@@ -32,22 +31,13 @@ public class ObservationRecord {
         if (json.has("state_vector")) {
             this.stateVector = json.getJSONObject("state_vector");
         }
-        
-        // FCheck for Metadata box when reading
-        if (json.has("metadata")) {
-            JSONObject metadata = json.getJSONObject("metadata");
-            this.id = metadata.optString("id", null);
-            this.recordOwner = metadata.optString("record_owner", null);
-            this.recordPayload = metadata.optString("record_payload", null);
-          
-        }
     }
 
-    // Convert to JSON: Create the Nested Structure
+    // NESTED METADATA
     public JSONObject toJSON() {
         JSONObject json = new JSONObject();
         
-        // 1. Scientific Data (Top Level)
+        // 1. Scientific Data (Outer Layer)
         json.put("target_body_name", this.targetBodyName);
         json.put("center_body_name", this.centerBodyName);
         json.put("epoch", this.epoch);
@@ -59,26 +49,21 @@ public class ObservationRecord {
             json.put("state_vector", this.stateVector);
         }
 
-        // 2. Metadata Box 
+        // 2. Metadata Box (Inner Layer)
         JSONObject metadata = new JSONObject();
         
         metadata.put("id", this.id);
         metadata.put("record_owner", this.recordOwner);
         
-        // Format Time: 2026-02-10T...
+        // Format Time correctly (ISO 8601)
         if (this.recordTimeReceived > 0) {
             DateTimeFormatter formatter = DateTimeFormatter.ofPattern("yyyy-MM-dd'T'HH:mm:ss.SSSX")
                 .withZone(ZoneId.of("UTC"));
             String dateStr = formatter.format(Instant.ofEpochMilli(this.recordTimeReceived));
             metadata.put("record_time_received", dateStr);
         }
-        
-        // Include the payload if it exists
-        if (this.recordPayload != null) {
-            metadata.put("record_payload", this.recordPayload);
-        }
 
-        // Add the box to the main JSON
+        // 3. Put the box inside the main JSON
         json.put("metadata", metadata); 
 
         return json;
@@ -94,16 +79,16 @@ public class ObservationRecord {
     public void setRecordOwner(String owner) { this.recordOwner = owner; }
     public String getRecordOwner() { return recordOwner; }
     
-    // Validation
     public boolean isValid() {
-        // Basic check: must have names and epoch
         if (targetBodyName == null || centerBodyName == null || epoch == null) {
+            return false;
+        }
+        if (orbitalElements == null && stateVector == null) {
             return false;
         }
         return true;
     }
 
-    // DB Accessors
     public String getTargetBodyName() { return targetBodyName; }
     public String getCenterBodyName() { return centerBodyName; }
     public String getEpoch() { return epoch; }
