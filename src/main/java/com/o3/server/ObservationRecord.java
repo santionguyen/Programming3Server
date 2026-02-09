@@ -4,10 +4,19 @@ import org.json.JSONArray;
 import org.json.JSONException;
 import org.json.JSONObject;
 
+import java.time.ZonedDateTime;
+import java.time.format.DateTimeFormatter;
+import java.time.ZoneId;
+import java.time.ZoneOffset; 
+
 public class ObservationRecord {
     private String targetBodyName;
     private String centerBodyName;
     private String epoch;
+
+    private String id;
+    private ZonedDateTime record_time_received;
+    private String record_owner;
 
     private JSONObject orbitalElements;
     private JSONObject stateVector; 
@@ -18,6 +27,7 @@ public class ObservationRecord {
         this.targetBodyName = json.getString("target_body_name");
         this.centerBodyName = json.getString("center_body_name");
         this.epoch = json.getString("epoch");
+
 
         // Validate Orbital Elements
         if (json.has("orbital_elements")) {
@@ -68,11 +78,32 @@ public class ObservationRecord {
         return true;
     }
 
+    // Setters for server-generated fields
+    public void setId(String id) {
+        this.id = id;
+    }
+
+    public void setRecordTimeReceived(long time) {
+    // Converts the database number (long) back to a ZonedDateTime object
+    this.record_time_received = ZonedDateTime.ofInstant(java.time.Instant.ofEpochMilli(time), ZoneOffset.UTC);
+}
+
+    public void setRecordOwner(String owner) {
+        this.record_owner = owner;
+    }
+
     public JSONObject toJSON() {
         JSONObject json = new JSONObject();
         json.put("target_body_name", this.targetBodyName);
         json.put("center_body_name", this.centerBodyName);
         json.put("epoch", this.epoch);
+        json.put("id", this.id);
+
+        if (this.record_time_received != null) {
+            DateTimeFormatter formatter = DateTimeFormatter.ofPattern("yyyy-MM-dd'T'HH:mm:ss.SSSX");
+            json.put("record_time_received", this.record_time_received.format(formatter));
+        }
+        json.put("record_owner", this.record_owner);
         
         if (this.orbitalElements != null) {
             json.put("orbital_elements", this.orbitalElements);
@@ -82,4 +113,33 @@ public class ObservationRecord {
         }
         return json;
     }
+
+    public String getId(){
+        return this.id;
+    }
+    public String getRecordOwner(){
+        return this.record_owner;
+    }
+    public long getRecordTimeReceived(){
+        return this.record_time_received.toInstant().toEpochMilli();
+    }
+    public String getTargetBodyName(){
+        return this.targetBodyName;
+    }
+    public String getCenterBodyName(){
+        return this.centerBodyName;
+    }
+    public String getEpoch(){
+        return this.epoch;
+    }
+    public JSONObject getOrbitalElements() {
+        return this.orbitalElements;
+    }
+
+    public JSONObject getStateVector() {
+        return this.stateVector;
+    }
+
+
+
 }

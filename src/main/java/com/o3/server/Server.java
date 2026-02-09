@@ -13,10 +13,20 @@ import java.util.stream.Collectors;
 import org.json.JSONArray;
 import org.json.JSONException;
 import org.json.JSONObject;
+import java.util.UUID;
 
 public class Server implements HttpHandler {
     
     public List<ObservationRecord> messages = new ArrayList<>();
+    //create the variable database 
+    public MessageDatabase db = new MessageDatabase();
+    // Constructor to initialize database
+    public Server(){
+        db.open("server.db");
+        db.createTable();
+        this.messages = db.readMessages();
+    }
+
 
     // Helper to create SSL context
     private static SSLContext myServerSSLContext(String file, String pass) throws Exception {
@@ -53,10 +63,23 @@ public class Server implements HttpHandler {
 
                 // 2. Convert to Record (This should throw JSONException if data types are wrong)
                 ObservationRecord newRecord = new ObservationRecord(jsonMsg);
+                //Fix: 
+                // A. Set the time
+                newRecord.setRecordTimeReceived(System.currentTimeMillis());
+                // B. Set a unique ID
+                newRecord.setId(UUID.randomUUID().toString());
+                // C. Set the owner
+                if (exchange.getPrincipal() != null) {
+                    newRecord.setRecordOwner(exchange.getPrincipal().getUsername());
+                } else {
+                    newRecord.setRecordOwner("unknown");
+                }
                 
                 // 3. Validate logical constraints (e.g. valid lat/lon ranges)
                 if (newRecord.isValid()) {
                     messages.add(newRecord);
+                    db.addMessage(newRecord);
+                    System.out.println("Saved message from: " + newRecord.getRecordOwner());
                     exchange.sendResponseHeaders(200, -1); // 200 OK 
                 } else {
                     sendResponse(exchange, 400, "Invalid content in orbital elements or state_vector");
@@ -105,10 +128,9 @@ public class Server implements HttpHandler {
             os.write(bytes);
         }
     }
-
     public static void main(String[] args) {
         try {
-            String keystoreFile = "keystore.jks"; // default for local testing
+            String keystoreFile = "keystore.jks"; 
             String password = "password";
             
             if (args.length >= 2) {
@@ -119,7 +141,7 @@ public class Server implements HttpHandler {
             // Create HTTPS Server
             HttpsServer server = HttpsServer.create(new InetSocketAddress(8001), 0);
 
-            // Configure SSL
+            // Configure SSL (Keep your existing SSL code here)
             SSLContext sslContext = myServerSSLContext(keystoreFile, password);
             server.setHttpsConfigurator(new HttpsConfigurator(sslContext) {
                 public void configure(HttpsParameters params) {
@@ -136,15 +158,21 @@ public class Server implements HttpHandler {
                     }
                 }
             });
-
-            // Create Authenticator
-            UserAuthenticator authenticator = new UserAuthenticator("datarecord");
             
-            // Setup paths
+            // 1. Create the Server object first (so the DB opens)
+            Server myServer = new Server();
+
+            // 2. Create Authenticator (Pass the DB from the server instance)
+
+            UserAuthenticator authenticator = new UserAuthenticator("datarecord", myServer.db);
+            
+            // 3. Setup Contexts
             server.createContext("/registration", new RegistrationHandler(authenticator));
             
-            HttpContext context = server.createContext("/datarecord", new Server());
+            // Note: use 'myServer' here instead of 'new Server()'
+            HttpContext context = server.createContext("/datarecord", myServer); 
             context.setAuthenticator(authenticator);
+
 
             // Start server
             server.setExecutor(null);
@@ -155,4 +183,5 @@ public class Server implements HttpHandler {
             e.printStackTrace();
         }
     }
+
 }

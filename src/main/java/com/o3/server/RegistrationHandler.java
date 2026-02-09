@@ -30,8 +30,9 @@ public class RegistrationHandler implements HttpHandler{
             String username = jsonUser.getString("username");
             String password = jsonUser.getString("password");
             String email = jsonUser.getString("email");
+            String nickname = jsonUser.getString("nickname");
             //Create the new User Object
-            User newUser = new User(username, password, email);
+            User newUser = new User(username, password, email, nickname);
             // add to Authenticor
             boolean success = auth.addUser(newUser);
             if (success){
