@@ -102,4 +102,8 @@ public class ObservationRecord {
     public String getEpoch() { return epoch; }
     public JSONObject getOrbitalElements() { return orbitalElements; }
     public JSONObject getStateVector() { return stateVector; }
+
+
+    public String getRecordPayload() { return recordPayload; }
+    public void setRecordPayload(String payload) { this.recordPayload = payload; }
 }

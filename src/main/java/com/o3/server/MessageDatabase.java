@@ -33,6 +33,7 @@ public class MessageDatabase {
         try{
             Statement statement = connection.createStatement();
 
+            // UPDATED: Added record_payload column
             String sql = "CREATE TABLE IF NOT EXISTS messages (" +
                          "id TEXT PRIMARY KEY, " +
                          "record_time_received INTEGER, " + 
@@ -41,7 +42,8 @@ public class MessageDatabase {
                          "center_body_name TEXT, " +
                          "epoch TEXT, " +
                          "orbital_elements TEXT, " +
-                         "state_vector TEXT" +
+                         "state_vector TEXT, " +
+                         "record_payload TEXT" + // <--- NEW COLUMN ADDED HERE
                          ")";
             statement.execute(sql);
 
@@ -61,9 +63,10 @@ public class MessageDatabase {
 
     }
     public void addMessage(ObservationRecord record){
+        // UPDATED: Added record_payload to INSERT statement
         String sql = "INSERT INTO messages (id, record_time_received, record_owner, " + 
-                     "target_body_name, center_body_name, epoch, orbital_elements, state_vector) " + 
-                     "VALUES (?, ?, ?, ?, ?, ?, ?, ?)";
+                     "target_body_name, center_body_name, epoch, orbital_elements, state_vector, record_payload) " + 
+                     "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)";
         try{
             PreparedStatement pstmt = connection.prepareStatement(sql);
             //1. id
@@ -93,6 +96,10 @@ public class MessageDatabase {
             } else {
                 pstmt.setString(8, null);
             }
+            
+            //9. record_payload (NEW)
+            pstmt.setString(9, record.getRecordPayload());
+
             pstmt.executeUpdate();
             pstmt.close();
 
@@ -127,6 +134,7 @@ public class MessageDatabase {
                 if (vectorStr != null) {
                     json.put("state_vector", new JSONObject(vectorStr));
                 }
+                
 
                 // 2. Create the Java object using the constructor
                 ObservationRecord record = new ObservationRecord(json);
@@ -135,8 +143,11 @@ public class MessageDatabase {
                 record.setId(rs.getString("id"));
                 record.setRecordTimeReceived(rs.getLong("record_time_received"));
                 record.setRecordOwner(rs.getString("record_owner"));
+                
+                // 4. Fill in the Payload (NEW)
+                record.setRecordPayload(rs.getString("record_payload"));
 
-                // 4. Add to the list
+                // 5. Add to the list
                 loadedMessages.add(record);
             }
             
