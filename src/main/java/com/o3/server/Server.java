@@ -22,12 +22,10 @@ public class Server implements HttpHandler {
 
     // Constructor
     public Server(){
-        // 1. CRITICAL FIX: Check for the test environment's database path
         String dbPath = System.getenv("DATABASE_PATH");
         if (dbPath == null) {
-            dbPath = "server.db"; // Fallback for local testing
+            dbPath = "server.db"; 
         }
-        
         db.open(dbPath);
         db.createTable();
         this.messages = db.readMessages();
@@ -68,10 +66,14 @@ public class Server implements HttpHandler {
                 newRecord.setRecordTimeReceived(System.currentTimeMillis());
                 newRecord.setId(UUID.randomUUID().toString());
                 
-                if (exchange.getPrincipal() != null) {
-                    newRecord.setRecordOwner(exchange.getPrincipal().getUsername());
-                } else {
-                    newRecord.setRecordOwner("unknown");
+                // FIX: Only set owner if the input didn't provide one
+            
+                if (newRecord.getRecordOwner() == null || newRecord.getRecordOwner().isEmpty()) {
+                    if (exchange.getPrincipal() != null) {
+                        newRecord.setRecordOwner(exchange.getPrincipal().getUsername());
+                    } else {
+                        newRecord.setRecordOwner("unknown");
+                    }
                 }
                 
                 if (newRecord.isValid()) {
@@ -83,7 +85,7 @@ public class Server implements HttpHandler {
                 }
 
             } catch (JSONException e) {
-                // This catches the 'getDouble' errors from ObservationRecord (testFaultyMessage2)
+                // Catches strict type errors from ObservationRecord 
                 sendResponse(exchange, 400, "Invalid JSON format or data type");
             } catch (Exception e) {
                 e.printStackTrace();

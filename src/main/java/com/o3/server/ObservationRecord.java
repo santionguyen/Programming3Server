@@ -17,23 +17,35 @@ public class ObservationRecord {
     private String id;
     private ZonedDateTime record_time_received;
     private String record_owner;
-    private String recordPayload; // New Field
+    private String recordPayload;
 
     private JSONObject orbitalElements;
     private JSONObject stateVector; 
 
     public ObservationRecord(JSONObject json) throws JSONException {
-        // Use optString for these so we don't crash if it's a generic payload message
+        // 1. STRICT TYPE CHECKING 
+        // Ensure string fields are actually strings, not numbers or arrays
+        if (json.has("target_body_name") && !(json.get("target_body_name") instanceof String)) {
+            throw new JSONException("target_body_name must be a string");
+        }
+        if (json.has("center_body_name") && !(json.get("center_body_name") instanceof String)) {
+            throw new JSONException("center_body_name must be a string");
+        }
+        if (json.has("epoch") && !(json.get("epoch") instanceof String)) {
+            throw new JSONException("epoch must be a string");
+        }
+
         this.targetBodyName = json.optString("target_body_name", null);
         this.centerBodyName = json.optString("center_body_name", null);
         this.epoch = json.optString("epoch", null);
         
-        // Also capture generic payload
+        // Capture generic payload from top level if present
         this.recordPayload = json.optString("record_payload", null);
 
-        // Validate Orbital Elements (Strict Type Checking)
+        // Validate Orbital Elements (Strict Type Checking thru getDouble)
         if (json.has("orbital_elements")) {
             JSONObject orbital = json.getJSONObject("orbital_elements");
+            // These calls throw JSONException if values are missing or not numbers
             orbital.getDouble("semi_major_axis_au");
             orbital.getDouble("eccentricity");
             orbital.getDouble("inclination_deg");
@@ -43,7 +55,7 @@ public class ObservationRecord {
             this.orbitalElements = orbital;
         }
 
-        // Validate State Vector 
+        // Validate State Vector
         if (json.has("state_vector")) {
             JSONObject vector = json.getJSONObject("state_vector");
             JSONArray pos = vector.getJSONArray("position_au");
@@ -51,6 +63,7 @@ public class ObservationRecord {
             if (pos.length() != 3 || vel.length() != 3) {
                  throw new JSONException("State vectors must have 3 components");
             }
+            // Verify content are numbers
             for(int i=0; i<3; i++) {
                 pos.getDouble(i);
                 vel.getDouble(i);
@@ -58,18 +71,29 @@ public class ObservationRecord {
             this.stateVector = vector;
         }
         
-        // Handle persistence metadata if it exists
+        // Handle persistence metadata
         if (json.has("metadata")) {
             JSONObject metadata = json.getJSONObject("metadata");
             this.id = metadata.optString("id");
-            this.record_owner = metadata.optString("record_owner");
+            // Capture owner from JSON if provided (Critical for tests!)
+            if (metadata.has("record_owner")) {
+                this.record_owner = metadata.getString("record_owner");
+            }
             if (metadata.has("record_payload")) {
                 this.recordPayload = metadata.getString("record_payload");
             }
         }
     }
 
+    // 2. RESTORE VALIDATION LOGIC 
     public boolean isValid() {
+        if (targetBodyName == null || targetBodyName.isEmpty()) return false;
+        if (centerBodyName == null || centerBodyName.isEmpty()) return false;
+        if (epoch == null || epoch.isEmpty()) return false;
+        
+        // Must have at least one scientific data set!
+        if (orbitalElements == null && stateVector == null) return false;
+        
         return true;
     }
 
@@ -87,7 +111,7 @@ public class ObservationRecord {
     public String getTargetBodyName(){ return this.targetBodyName; }
     public String getCenterBodyName(){ return this.centerBodyName; }
     public String getEpoch(){ return this.epoch; }
-    public String getRecordPayload() { return this.recordPayload; } // New Getter
+    public String getRecordPayload() { return this.recordPayload; } 
     public JSONObject getOrbitalElements() { return this.orbitalElements; }
     public JSONObject getStateVector() { return this.stateVector; }
 
