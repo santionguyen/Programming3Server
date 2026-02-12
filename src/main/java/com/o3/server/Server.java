@@ -26,7 +26,8 @@ public class Server implements HttpHandler {
         if (dbPath == null) {
             dbPath = "server.db";
         }
-        db.open("server.db");
+
+        db.open(dbPath);
         db.createTable();
         this.messages = db.readMessages();
     }
