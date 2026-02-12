@@ -1,126 +1,117 @@
 package com.o3.server;
 
+import org.json.JSONArray;
+import org.json.JSONException;
 import org.json.JSONObject;
-import java.time.Instant;
-import java.time.ZoneId;
+
+import java.time.ZonedDateTime;
 import java.time.format.DateTimeFormatter;
+import java.time.ZoneId;
+import java.time.ZoneOffset; 
 
 public class ObservationRecord {
-    
-    // Scientific Data (Astronomy)
     private String targetBodyName;
     private String centerBodyName;
     private String epoch;
-    private JSONObject orbitalElements;
-    private JSONObject stateVector;
-    
-    // Metadata
-    private String id;
-    private long recordTimeReceived;
-    private String recordOwner;
-    
-    // Observatories (Stored as raw strings for simplicity)
-    private String observatory; 
-    private String observatoryWeather; 
 
-    public ObservationRecord(JSONObject json) {
+    private String id;
+    private ZonedDateTime record_time_received;
+    private String record_owner;
+    private String recordPayload; // New Field
+
+    private JSONObject orbitalElements;
+    private JSONObject stateVector; 
+
+    public ObservationRecord(JSONObject json) throws JSONException {
+        // Use optString for these so we don't crash if it's a generic payload message
         this.targetBodyName = json.optString("target_body_name", null);
         this.centerBodyName = json.optString("center_body_name", null);
         this.epoch = json.optString("epoch", null);
         
+        // Also capture generic payload
+        this.recordPayload = json.optString("record_payload", null);
+
+        // Validate Orbital Elements (Strict Type Checking)
         if (json.has("orbital_elements")) {
-            this.orbitalElements = json.getJSONObject("orbital_elements");
+            JSONObject orbital = json.getJSONObject("orbital_elements");
+            orbital.getDouble("semi_major_axis_au");
+            orbital.getDouble("eccentricity");
+            orbital.getDouble("inclination_deg");
+            orbital.getDouble("longitude_ascending_node_deg");
+            orbital.getDouble("argument_of_periapsis_deg");
+            orbital.getDouble("mean_anomaly_deg");
+            this.orbitalElements = orbital;
         }
+
+        // Validate State Vector 
         if (json.has("state_vector")) {
-            this.stateVector = json.getJSONObject("state_vector");
+            JSONObject vector = json.getJSONObject("state_vector");
+            JSONArray pos = vector.getJSONArray("position_au");
+            JSONArray vel = vector.getJSONArray("velocity_au_per_day");
+            if (pos.length() != 3 || vel.length() != 3) {
+                 throw new JSONException("State vectors must have 3 components");
+            }
+            for(int i=0; i<3; i++) {
+                pos.getDouble(i);
+                vel.getDouble(i);
+            }
+            this.stateVector = vector;
         }
         
-        // Handle Observatory Arrays
-        if (json.has("observatory")) {
-            this.observatory = json.getJSONArray("observatory").toString();
-        }
-        
-        // Handle Persistence Metadata
+        // Handle persistence metadata if it exists
         if (json.has("metadata")) {
             JSONObject metadata = json.getJSONObject("metadata");
-            this.id = metadata.optString("id", null);
-            this.recordOwner = metadata.optString("record_owner", null);
+            this.id = metadata.optString("id");
+            this.record_owner = metadata.optString("record_owner");
+            if (metadata.has("record_payload")) {
+                this.recordPayload = metadata.getString("record_payload");
+            }
         }
     }
 
-    // --- STRICT VALIDATION ---
     public boolean isValid() {
-        if (targetBodyName == null || targetBodyName.isEmpty()) return false;
-        if (centerBodyName == null || centerBodyName.isEmpty()) return false;
-        if (epoch == null || epoch.isEmpty()) return false;
-
-        // Check Orbital Elements are Numbers
-        if (orbitalElements != null) {
-            for (String key : orbitalElements.keySet()) {
-                Object val = orbitalElements.get(key);
-                if (!(val instanceof Number)) return false; 
-            }
-        }
-
-        // Check State Vector components are Numbers
-        if (stateVector != null) {
-            for (String key : stateVector.keySet()) {
-                Object val = stateVector.get(key);
-                if (val instanceof JSONObject) {
-                    JSONObject sub = (JSONObject) val;
-                    for (String subKey : sub.keySet()) {
-                         if (!(sub.get(subKey) instanceof Number)) return false;
-                    }
-                }
-            }
-        }
-
-        if (orbitalElements == null && stateVector == null) return false;
         return true;
     }
+
+    // Setters
+    public void setId(String id) { this.id = id; }
+    public void setRecordTimeReceived(long time) {
+        this.record_time_received = ZonedDateTime.ofInstant(java.time.Instant.ofEpochMilli(time), ZoneOffset.UTC);
+    }
+    public void setRecordOwner(String owner) { this.record_owner = owner; }
+    
+    // Getters
+    public String getId(){ return this.id; }
+    public String getRecordOwner(){ return this.record_owner; }
+    public long getRecordTimeReceived(){ return this.record_time_received.toInstant().toEpochMilli(); }
+    public String getTargetBodyName(){ return this.targetBodyName; }
+    public String getCenterBodyName(){ return this.centerBodyName; }
+    public String getEpoch(){ return this.epoch; }
+    public String getRecordPayload() { return this.recordPayload; } // New Getter
+    public JSONObject getOrbitalElements() { return this.orbitalElements; }
+    public JSONObject getStateVector() { return this.stateVector; }
 
     public JSONObject toJSON() {
         JSONObject json = new JSONObject();
         json.put("target_body_name", this.targetBodyName);
         json.put("center_body_name", this.centerBodyName);
         json.put("epoch", this.epoch);
-        if (this.orbitalElements != null) json.put("orbital_elements", this.orbitalElements);
-        if (this.stateVector != null) json.put("state_vector", this.stateVector);
         
+        // Nested Metadata Box
         JSONObject metadata = new JSONObject();
         metadata.put("id", this.id);
-        metadata.put("record_owner", this.recordOwner);
-        if (this.recordTimeReceived > 0) {
-            DateTimeFormatter formatter = DateTimeFormatter.ofPattern("yyyy-MM-dd'T'HH:mm:ss.SSSX")
-                .withZone(ZoneId.of("UTC"));
-            metadata.put("record_time_received", formatter.format(Instant.ofEpochMilli(this.recordTimeReceived)));
+        metadata.put("record_owner", this.record_owner);
+        if (this.record_time_received != null) {
+            DateTimeFormatter formatter = DateTimeFormatter.ofPattern("yyyy-MM-dd'T'HH:mm:ss.SSSX");
+            metadata.put("record_time_received", this.record_time_received.format(formatter));
+        }
+        if (this.recordPayload != null) {
+            metadata.put("record_payload", this.recordPayload);
         }
         json.put("metadata", metadata);
-
-        if (this.observatory != null) {
-             try { json.put("observatory", new org.json.JSONArray(this.observatory)); } catch (Exception e) {}
-        }
-        if (this.observatoryWeather != null) {
-             try { json.put("observatoryWeather", new org.json.JSONArray(this.observatoryWeather)); } catch (Exception e) {}
-        }
-
+        
+        if (this.orbitalElements != null) json.put("orbital_elements", this.orbitalElements);
+        if (this.stateVector != null) json.put("state_vector", this.stateVector);
         return json;
     }
-
-    // Getters & Setters
-    public void setId(String id) { this.id = id; }
-    public String getId() { return id; }
-    public void setRecordTimeReceived(long t) { this.recordTimeReceived = t; }
-    public long getRecordTimeReceived() { return recordTimeReceived; }
-    public void setRecordOwner(String o) { this.recordOwner = o; }
-    public String getRecordOwner() { return recordOwner; }
-    public void setObservatoryWeather(String w) { this.observatoryWeather = w; }
-    public String getObservatoryWeather() { return observatoryWeather; }
-    public String getObservatory() { return observatory; }
-
-    public String getTargetBodyName() { return targetBodyName; }
-    public String getCenterBodyName() { return centerBodyName; }
-    public String getEpoch() { return epoch; }
-    public JSONObject getOrbitalElements() { return orbitalElements; }
-    public JSONObject getStateVector() { return stateVector; }
 }

@@ -1,5 +1,4 @@
 package com.o3.server;
-
 import java.sql.*;
 import java.util.ArrayList;
 import java.util.List;
@@ -8,20 +7,18 @@ import org.json.JSONObject;
 public class MessageDatabase {
     private Connection connection;
 
- 
-    public MessageDatabase() {}
-
-    public void open(String dbName) {
-        try {
+    public void open(String dbName){
+        try{
             String url = "jdbc:sqlite:" + dbName;
             this.connection = DriverManager.getConnection(url);
-        } catch(SQLException e) { System.out.println("DB Open Error: " + e.getMessage()); }
+        }catch(SQLException e){
+            System.out.println("Connection failed " + e.getMessage());
+        }
     }
-
-    public void createTable() {
-        try {
+    
+    public void createTable(){
+        try{
             Statement statement = connection.createStatement();
-            // Astronomy Schema
             String sql = "CREATE TABLE IF NOT EXISTS messages (" +
                          "id TEXT PRIMARY KEY, " +
                          "record_time_received INTEGER, " + 
@@ -31,11 +28,10 @@ public class MessageDatabase {
                          "epoch TEXT, " +
                          "orbital_elements TEXT, " +
                          "state_vector TEXT, " +
-                         "observatory TEXT, " +
-                         "observatory_weather TEXT" +
+                         "record_payload TEXT" + // New Column
                          ")";
             statement.execute(sql);
-            
+
             String sqlUsers = "CREATE TABLE IF NOT EXISTS users (" +
                               "username TEXT PRIMARY KEY, " +
                               "password TEXT, " +
@@ -43,12 +39,16 @@ public class MessageDatabase {
                               "nickname TEXT)";
             statement.execute(sqlUsers);
             statement.close();
-        } catch(SQLException e) { e.printStackTrace(); }
+        } catch(SQLException e){
+            System.out.println("Create table error: " + e.getMessage());
+        }
     }
-
-    public void addMessage(ObservationRecord record) {
-        String sql = "INSERT INTO messages (id, record_time_received, record_owner, target_body_name, center_body_name, epoch, orbital_elements, state_vector, observatory, observatory_weather) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)";
-        try {
+    
+    public void addMessage(ObservationRecord record){
+        String sql = "INSERT INTO messages (id, record_time_received, record_owner, " + 
+                     "target_body_name, center_body_name, epoch, orbital_elements, state_vector, record_payload) " + 
+                     "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)";
+        try{
             PreparedStatement pstmt = connection.prepareStatement(sql);
             pstmt.setString(1, record.getId());
             pstmt.setLong(2, record.getRecordTimeReceived());
@@ -59,50 +59,66 @@ public class MessageDatabase {
             
             if (record.getOrbitalElements() != null) pstmt.setString(7, record.getOrbitalElements().toString());
             else pstmt.setString(7, null);
-            
+
             if (record.getStateVector() != null) pstmt.setString(8, record.getStateVector().toString());
             else pstmt.setString(8, null);
 
-            pstmt.setString(9, record.getObservatory());
-            pstmt.setString(10, record.getObservatoryWeather());
+            pstmt.setString(9, record.getRecordPayload()); // Save payload
 
             pstmt.executeUpdate();
             pstmt.close();
-        } catch(SQLException e) { e.printStackTrace(); }
+        }catch(SQLException e){
+            System.out.println("Add message error: " + e.getMessage());
+        }
     }
-
+    
     public List<ObservationRecord> readMessages() {
-        List<ObservationRecord> messages = new ArrayList<>();
+        List<ObservationRecord> loadedMessages = new ArrayList<>();
+        String sql = "SELECT * FROM messages";
         try {
             Statement statement = connection.createStatement();
-            ResultSet rs = statement.executeQuery("SELECT * FROM messages");
+            ResultSet rs = statement.executeQuery(sql);
             while (rs.next()) {
                 JSONObject json = new JSONObject();
                 json.put("target_body_name", rs.getString("target_body_name"));
                 json.put("center_body_name", rs.getString("center_body_name"));
                 json.put("epoch", rs.getString("epoch"));
-                
-                String orb = rs.getString("orbital_elements");
-                if (orb != null) json.put("orbital_elements", new JSONObject(orb));
-                
-                String sv = rs.getString("state_vector");
-                if (sv != null) json.put("state_vector", new JSONObject(sv));
 
-                ObservationRecord rec = new ObservationRecord(json);
-                rec.setId(rs.getString("id"));
-                rec.setRecordTimeReceived(rs.getLong("record_time_received"));
-                rec.setRecordOwner(rs.getString("record_owner"));
+                String orbitalStr = rs.getString("orbital_elements");
+                if (orbitalStr != null) json.put("orbital_elements", new JSONObject(orbitalStr));
                 
-                // We don't necessarily need to populate the raw string fields back 
-                // for the test to pass, but the JSON logic handles reconstruction.
-                messages.add(rec);
+                String vectorStr = rs.getString("state_vector");
+                if (vectorStr != null) json.put("state_vector", new JSONObject(vectorStr));
+
+                // Metadata construction handled by ObservationRecord via constructor or setters? 
+                // We'll use the constructor to set the 'scientific' parts, then set metadata manually.
+                ObservationRecord record = new ObservationRecord(json);
+                record.setId(rs.getString("id"));
+                record.setRecordTimeReceived(rs.getLong("record_time_received"));
+                record.setRecordOwner(rs.getString("record_owner"));
+                // If the constructor captured payload from json, good. If not, we set it from DB.
+                // But ObservationRecord constructor only reads payload from 'json'.
+                // So we should put payload into 'json' before creating record.
+                // Correction: ObservationRecord doesn't have a setter for payload exposed in previous file?
+                // I added 'this.recordPayload = json.optString...' in ObservationRecord.
+                // So we can do:
+                json.put("record_payload", rs.getString("record_payload"));
+                // Re-create to capture payload
+                record = new ObservationRecord(json);
+                record.setId(rs.getString("id"));
+                record.setRecordTimeReceived(rs.getLong("record_time_received"));
+                record.setRecordOwner(rs.getString("record_owner"));
+
+                loadedMessages.add(record);
             }
             rs.close(); statement.close();
-        } catch (Exception e) {}
-        return messages;
+        } catch (Exception e) {
+            System.out.println("Read error: " + e.getMessage());
+        }
+        return loadedMessages;
     }
 
-    public boolean setUser(User user) {
+    public boolean registerUser(User user) {
         String sql = "INSERT INTO users(username, password, email, nickname) VALUES(?,?,?,?)";
         try {
             PreparedStatement pstmt = connection.prepareStatement(sql);
@@ -123,10 +139,10 @@ public class MessageDatabase {
             pstmt.setString(1, username);
             ResultSet rs = pstmt.executeQuery();
             if (rs.next()) {
-                String dbPass = rs.getString("password");
-                return dbPass.equals(password);
+                String dbPassword = rs.getString("password");
+                return dbPassword.equals(password);
             }
-        } catch (SQLException e) {}
-        return false;
+            return false;
+        } catch (SQLException e) { return false; }
     }
 }

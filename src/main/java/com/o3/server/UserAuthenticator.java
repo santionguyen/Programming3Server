@@ -1,9 +1,7 @@
 package com.o3.server;
-
 import com.sun.net.httpserver.BasicAuthenticator;
 
 public class UserAuthenticator extends BasicAuthenticator {
-    
     private MessageDatabase db;
 
     public UserAuthenticator(String realm, MessageDatabase db) {
@@ -17,6 +15,6 @@ public class UserAuthenticator extends BasicAuthenticator {
     }
 
     public boolean addUser(User newUser) {
-        return db.setUser(newUser);
+        return db.registerUser(newUser);
     }
 }
