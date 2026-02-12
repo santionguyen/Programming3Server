@@ -19,6 +19,7 @@ public class MessageDatabase {
     public void createTable(){
         try{
             Statement statement = connection.createStatement();
+            // Added record_payload here
             String sql = "CREATE TABLE IF NOT EXISTS messages (" +
                          "id TEXT PRIMARY KEY, " +
                          "record_time_received INTEGER, " + 
@@ -28,7 +29,7 @@ public class MessageDatabase {
                          "epoch TEXT, " +
                          "orbital_elements TEXT, " +
                          "state_vector TEXT, " +
-                         "record_payload TEXT" + // New Column
+                         "record_payload TEXT" + 
                          ")";
             statement.execute(sql);
 
@@ -45,6 +46,7 @@ public class MessageDatabase {
     }
     
     public void addMessage(ObservationRecord record){
+        // Added record_payload here
         String sql = "INSERT INTO messages (id, record_time_received, record_owner, " + 
                      "target_body_name, center_body_name, epoch, orbital_elements, state_vector, record_payload) " + 
                      "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)";
@@ -63,7 +65,7 @@ public class MessageDatabase {
             if (record.getStateVector() != null) pstmt.setString(8, record.getStateVector().toString());
             else pstmt.setString(8, null);
 
-            pstmt.setString(9, record.getRecordPayload()); // Save payload
+            pstmt.setString(9, record.getRecordPayload()); // Save Payload
 
             pstmt.executeUpdate();
             pstmt.close();
@@ -90,24 +92,12 @@ public class MessageDatabase {
                 String vectorStr = rs.getString("state_vector");
                 if (vectorStr != null) json.put("state_vector", new JSONObject(vectorStr));
 
-                // Metadata construction handled by ObservationRecord via constructor or setters? 
-                // We'll use the constructor to set the 'scientific' parts, then set metadata manually.
                 ObservationRecord record = new ObservationRecord(json);
                 record.setId(rs.getString("id"));
                 record.setRecordTimeReceived(rs.getLong("record_time_received"));
                 record.setRecordOwner(rs.getString("record_owner"));
-                // If the constructor captured payload from json, good. If not, we set it from DB.
-                // But ObservationRecord constructor only reads payload from 'json'.
-                // So we should put payload into 'json' before creating record.
-                // Correction: ObservationRecord doesn't have a setter for payload exposed in previous file?
-                // I added 'this.recordPayload = json.optString...' in ObservationRecord.
-                // So we can do:
-                json.put("record_payload", rs.getString("record_payload"));
-                // Re-create to capture payload
-                record = new ObservationRecord(json);
-                record.setId(rs.getString("id"));
-                record.setRecordTimeReceived(rs.getLong("record_time_received"));
-                record.setRecordOwner(rs.getString("record_owner"));
+                // Read payload back
+                record.setRecordPayload(rs.getString("record_payload"));
 
                 loadedMessages.add(record);
             }
@@ -116,6 +106,22 @@ public class MessageDatabase {
             System.out.println("Read error: " + e.getMessage());
         }
         return loadedMessages;
+    }
+
+    // NEW METHOD: Get Nickname from Username
+    public String getUserNickname(String username) {
+        String sql = "SELECT nickname FROM users WHERE username = ?";
+        try {
+            PreparedStatement pstmt = connection.prepareStatement(sql);
+            pstmt.setString(1, username);
+            ResultSet rs = pstmt.executeQuery();
+            if (rs.next()) {
+                return rs.getString("nickname");
+            }
+        } catch (SQLException e) {
+            e.printStackTrace();
+        }
+        return null;
     }
 
     public boolean registerUser(User user) {

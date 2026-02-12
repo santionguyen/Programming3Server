@@ -20,31 +20,27 @@ public class Server implements HttpHandler {
     public List<ObservationRecord> messages = new ArrayList<>();
     public MessageDatabase db = new MessageDatabase();
 
-    // Constructor
     public Server(){
+        // 1.Use the test database if provided
         String dbPath = System.getenv("DATABASE_PATH");
         if (dbPath == null) {
-            dbPath = "server.db"; 
+            dbPath = "server.db";
         }
         db.open(dbPath);
         db.createTable();
         this.messages = db.readMessages();
     }
 
-    // SSL Helper
     private static SSLContext myServerSSLContext(String file, String pass) throws Exception {
         char[] passphrase = pass.toCharArray();
         KeyStore ks = KeyStore.getInstance("JKS");
         try (FileInputStream fis = new FileInputStream(file)) {
             ks.load(fis, passphrase);
         }
-
         KeyManagerFactory kmf = KeyManagerFactory.getInstance("SunX509");
         kmf.init(ks, passphrase);
-        
         TrustManagerFactory tmf = TrustManagerFactory.getInstance("SunX509");
         tmf.init(ks);
-        
         SSLContext ssl = SSLContext.getInstance("TLS");
         ssl.init(kmf.getKeyManagers(), tmf.getTrustManagers(), null);
         return ssl;
@@ -55,8 +51,7 @@ public class Server implements HttpHandler {
         if (exchange.getRequestMethod().equalsIgnoreCase("POST")) {
             InputStream stream = exchange.getRequestBody();
             String text = new BufferedReader(new InputStreamReader(stream, StandardCharsets.UTF_8))
-                    .lines()
-                    .collect(Collectors.joining("\n"));
+                    .lines().collect(Collectors.joining("\n"));
             stream.close();
 
             try {
@@ -66,14 +61,21 @@ public class Server implements HttpHandler {
                 newRecord.setRecordTimeReceived(System.currentTimeMillis());
                 newRecord.setId(UUID.randomUUID().toString());
                 
-                // FIX: Only set owner if the input didn't provide one
-            
-                if (newRecord.getRecordOwner() == null || newRecord.getRecordOwner().isEmpty()) {
-                    if (exchange.getPrincipal() != null) {
-                        newRecord.setRecordOwner(exchange.getPrincipal().getUsername());
+                // 2. NICKNAME FIX: look up nickname from DB!
+                String ownerToSet = "unknown";
+                if (exchange.getPrincipal() != null) {
+                    String username = exchange.getPrincipal().getUsername();
+                    String nickname = db.getUserNickname(username);
+                    if (nickname != null && !nickname.isEmpty()) {
+                        ownerToSet = nickname; // Use nickname if found
                     } else {
-                        newRecord.setRecordOwner("unknown");
+                        ownerToSet = username; // Fallback to username
                     }
+                }
+                
+                // Only overwrite if the JSON didn't provide one (usually tests don't)
+                if (newRecord.getRecordOwner() == null || newRecord.getRecordOwner().isEmpty()) {
+                    newRecord.setRecordOwner(ownerToSet);
                 }
                 
                 if (newRecord.isValid()) {
@@ -85,7 +87,6 @@ public class Server implements HttpHandler {
                 }
 
             } catch (JSONException e) {
-                // Catches strict type errors from ObservationRecord 
                 sendResponse(exchange, 400, "Invalid JSON format or data type");
             } catch (Exception e) {
                 e.printStackTrace();
@@ -106,7 +107,6 @@ public class Server implements HttpHandler {
                 
                 exchange.getResponseHeaders().add("Content-Type", "application/json");
                 exchange.sendResponseHeaders(200, bytes.length);
-
                 try (OutputStream os = exchange.getResponseBody()) {
                     os.write(bytes);
                 }
