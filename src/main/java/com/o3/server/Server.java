@@ -22,6 +22,10 @@ public class Server implements HttpHandler {
     public MessageDatabase db = new MessageDatabase();
     // Constructor to initialize database
     public Server(){
+        String dbPath = System.getenv("DATABASE_PATH");
+        if (dbPath == null) {
+            dbPath = "server.db";
+        }
         db.open("server.db");
         db.createTable();
         this.messages = db.readMessages();

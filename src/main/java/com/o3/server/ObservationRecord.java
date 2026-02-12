@@ -25,6 +25,8 @@ public class ObservationRecord {
         this.targetBodyName = json.optString("target_body_name", null);
         this.centerBodyName = json.optString("center_body_name", null);
         this.epoch = json.optString("epoch", null);
+
+        this.recordPayload = json.optString("record_payload", null);
         
         if (json.has("orbital_elements")) {
             this.orbitalElements = json.getJSONObject("orbital_elements");
