@@ -7,9 +7,9 @@ import java.nio.charset.StandardCharsets;
 import java.security.KeyStore;
 import javax.net.ssl.*;
 import java.util.ArrayList;
-import java.util.Collections; // Import for thread safety
+import java.util.Collections;
 import java.util.List;
-import java.util.concurrent.Executors; // Import for Thread Pool
+import java.util.concurrent.Executors;
 import java.util.stream.Collectors;
 
 import org.json.JSONArray;
@@ -17,9 +17,19 @@ import org.json.JSONException;
 import org.json.JSONObject;
 import java.util.UUID;
 
+// Weather imports
+import java.net.URI;
+import java.net.URL;
+import javax.xml.parsers.DocumentBuilder;
+import javax.xml.parsers.DocumentBuilderFactory;
+import org.w3c.dom.Document;
+import org.w3c.dom.Element;
+import org.w3c.dom.Node;
+import org.w3c.dom.NodeList;
+
 public class Server implements HttpHandler {
     
-    // WEEK 5 FIX: Use a synchronized (thread-safe) list
+    // Thread-safe list
     public List<ObservationRecord> messages = Collections.synchronizedList(new ArrayList<>());
     public MessageDatabase db = new MessageDatabase();
 
@@ -30,7 +40,7 @@ public class Server implements HttpHandler {
         }
         db.open(dbPath);
         db.createTable();
-        // Since readMessages is synchronized now, this is safe
+        // Add all at once (thread-safe)
         this.messages.addAll(db.readMessages());
     }
 
@@ -71,7 +81,7 @@ public class Server implements HttpHandler {
                     if (nickname != null && !nickname.isEmpty()) {
                         ownerToSet = nickname; 
                     } else {
-                        ownerToSet = username;
+                        ownerToSet = username; 
                     }
                 }
                 
@@ -80,8 +90,23 @@ public class Server implements HttpHandler {
                 }
                 
                 if (newRecord.isValid()) {
+                    // WEATHER LOGIC: Look inside the parsed record, not the raw JSON
+                    JSONArray observatories = newRecord.getObservatory();
+                    if (observatories != null) {
+                        for (int i = 0; i < observatories.length(); i++) {
+                            JSONObject obs = observatories.getJSONObject(i);
+                            if (obs.has("latitude") && obs.has("longitude")) {
+                                JSONObject weather = getWeatherInfo(obs.getDouble("latitude"), obs.getDouble("longitude"));
+                                if (weather != null) {
+                                    // Add weather to the existing observatory object
+                                    obs.put("weather", weather);
+                                }
+                            }
+                        }
+                    }
+
                     messages.add(newRecord);
-                    db.addMessage(newRecord); // This method is now synchronized in DB
+                    db.addMessage(newRecord);
                     exchange.sendResponseHeaders(200, -1);
                 } else {
                     sendResponse(exchange, 400, "Invalid content");
@@ -95,8 +120,8 @@ public class Server implements HttpHandler {
             }
 
         } else if (exchange.getRequestMethod().equalsIgnoreCase("GET")) {
-            // Thread-safe iteration over the synchronized list
             JSONArray responseArray = new JSONArray();
+            // Synchronize on the list to avoid ConcurrentModificationException
             synchronized(messages) {
                 if (messages.isEmpty()) {
                     exchange.sendResponseHeaders(204, -1);
@@ -125,6 +150,38 @@ public class Server implements HttpHandler {
         exchange.sendResponseHeaders(code, bytes.length);
         try (OutputStream os = exchange.getResponseBody()) {
             os.write(bytes);
+        }
+    }
+
+    // Weather Helper
+    private JSONObject getWeatherInfo(double latitude, double longitude) {
+        try {
+            DocumentBuilderFactory factory = DocumentBuilderFactory.newInstance();
+            DocumentBuilder builder = factory.newDocumentBuilder();
+            URI uri = new URI("http://127.0.0.1:4001/wfs?latlon="+latitude+","+longitude);
+            URL url = uri.toURL();
+            InputStream inputStream = url.openStream();
+            Document document = builder.parse(inputStream);
+            document.getDocumentElement().normalize();
+            NodeList nodeList = document.getElementsByTagName("wfs:member");
+            JSONObject weatherInfo = new JSONObject();
+            
+            for (int i = 0; i < nodeList.getLength(); i++) {
+                Node node = nodeList.item(i);
+                if (node.getNodeType() == Node.ELEMENT_NODE) {
+                    Element element = (Element) node;
+                    Element bsWfsElement = (Element) element.getElementsByTagName("BsWfs:BsWfsElement").item(0);
+                    String parameterName = bsWfsElement.getElementsByTagName("BsWfs:ParameterName").item(0).getTextContent();
+                    String parameterValue = bsWfsElement.getElementsByTagName("BsWfs:ParameterValue").item(0).getTextContent();
+                    
+                    if (parameterName.equals("temperatureInKelvins")) weatherInfo.put("temperatureInKelvins", parameterValue);
+                    else if (parameterName.equals("cloudinessPercentance")) weatherInfo.put("cloudinessPercentance", parameterValue);
+                    else if (parameterName.equals("bagroundLightVolume")) weatherInfo.put("bagroundLightVolume", parameterValue);
+                }
+            }
+            return weatherInfo;
+        } catch (Exception e) {
+            return null;
         }
     }
 
@@ -162,7 +219,7 @@ public class Server implements HttpHandler {
             HttpContext context = server.createContext("/datarecord", myServer); 
             context.setAuthenticator(authenticator);
 
-            // WEEK 5 FIX: Use a Thread Pool instead of null
+            //Use Thread Pool
             server.setExecutor(Executors.newCachedThreadPool());
             
             server.start();

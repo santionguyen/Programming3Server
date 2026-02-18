@@ -19,13 +19,14 @@ public class ObservationRecord {
     private String record_owner;
     private String recordPayload;
     
-    // WEEK 5: New field
+    // WEEK 5: Observatory Array
     private JSONArray observatory; 
 
     private JSONObject orbitalElements;
     private JSONObject stateVector; 
 
     public ObservationRecord(JSONObject json) throws JSONException {
+        // 1. Strict String Checks
         if (json.has("target_body_name") && !(json.get("target_body_name") instanceof String)) {
             throw new JSONException("target_body_name must be a string");
         }
@@ -41,6 +42,7 @@ public class ObservationRecord {
         this.epoch = json.optString("epoch", null);
         this.recordPayload = json.optString("record_payload", null);
 
+        // 2. Parse Orbital Elements
         if (json.has("orbital_elements")) {
             JSONObject orbital = json.getJSONObject("orbital_elements");
             orbital.getDouble("semi_major_axis_au");
@@ -52,6 +54,7 @@ public class ObservationRecord {
             this.orbitalElements = orbital;
         }
 
+        // 3. Parse State Vector
         if (json.has("state_vector")) {
             JSONObject vector = json.getJSONObject("state_vector");
             JSONArray pos = vector.getJSONArray("position_au");
@@ -66,24 +69,46 @@ public class ObservationRecord {
             this.stateVector = vector;
         }
         
+        // 4. Parse Metadata & Observatory
         if (json.has("metadata")) {
             JSONObject metadata = json.getJSONObject("metadata");
             this.id = metadata.optString("id");
             if (metadata.has("record_owner")) this.record_owner = metadata.getString("record_owner");
             if (metadata.has("record_payload")) this.recordPayload = metadata.getString("record_payload");
             
-            // WEEK 5: Parse observatory
+            // Capture observatory array
             if (metadata.has("observatory")) {
                 this.observatory = metadata.getJSONArray("observatory");
             }
         }
     }
 
+    // --- FIX the test value  ---
     public boolean isValid() {
         if (targetBodyName == null || targetBodyName.isEmpty()) return false;
         if (centerBodyName == null || centerBodyName.isEmpty()) return false;
         if (epoch == null || epoch.isEmpty()) return false;
         if (orbitalElements == null && stateVector == null) return false;
+
+        // Check Observatory Data
+        if (this.observatory != null) {
+            for (int i = 0; i < this.observatory.length(); i++) {
+                try {
+                    JSONObject obs = this.observatory.getJSONObject(i);
+                    // 1. Check keys exist
+                    if (!obs.has("latitude") || !obs.has("longitude") || !obs.has("observatory name")) {
+                        return false; 
+                    }
+                    // 2. Check types (Latitude/Longtitude must be numbers)
+                    if (!(obs.get("latitude") instanceof Number)) return false;
+                    if (!(obs.get("longitude") instanceof Number)) return false;
+                    
+                } catch (JSONException e) {
+                    return false;
+                }
+            }
+        }
+
         return true;
     }
 
@@ -93,7 +118,6 @@ public class ObservationRecord {
     }
     public void setRecordOwner(String owner) { this.record_owner = owner; }
     public void setRecordPayload(String payload) { this.recordPayload = payload; }
-    // Setter for DB restoration
     public void setObservatory(JSONArray observatory) { this.observatory = observatory; }
     
     public String getId(){ return this.id; }
@@ -123,11 +147,10 @@ public class ObservationRecord {
         if (this.recordPayload != null) {
             metadata.put("record_payload", this.recordPayload);
         }
-        // WEEK 5: Include observatory in output
+        // Include observatory in output
         if (this.observatory != null) {
             metadata.put("observatory", this.observatory);
         }
-        
         json.put("metadata", metadata);
         
         if (this.orbitalElements != null) json.put("orbital_elements", this.orbitalElements);

@@ -7,7 +7,6 @@ import org.json.JSONObject;
 public class MessageDatabase {
     private Connection connection;
 
-    // Synchronized to prevent thread conflicts during connection
     public synchronized void open(String dbName){
         try{
             String url = "jdbc:sqlite:" + dbName;
@@ -17,11 +16,10 @@ public class MessageDatabase {
         }
     }
     
-    // Synchronized table creation
     public synchronized void createTable(){
         try{
             Statement statement = connection.createStatement();
-            // WEEK 5: Added 'observatory' column
+            // Added 'observatory' column
             String sql = "CREATE TABLE IF NOT EXISTS messages (" +
                          "id TEXT PRIMARY KEY, " +
                          "record_time_received INTEGER, " + 
@@ -48,9 +46,7 @@ public class MessageDatabase {
         }
     }
     
-    // Synchronized insertion
     public synchronized void addMessage(ObservationRecord record){
-        // WEEK 5: Insert 'observatory'
         String sql = "INSERT INTO messages (id, record_time_received, record_owner, " + 
                      "target_body_name, center_body_name, epoch, orbital_elements, state_vector, record_payload, observatory) " + 
                      "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)";
@@ -71,7 +67,7 @@ public class MessageDatabase {
 
             pstmt.setString(9, record.getRecordPayload()); 
             
-            // Save observatory as a JSON string
+            // Save observatory
             if (record.getObservatory() != null) pstmt.setString(10, record.getObservatory().toString());
             else pstmt.setString(10, null);
 
@@ -82,7 +78,6 @@ public class MessageDatabase {
         }
     }
     
-    // Synchronized reading
     public synchronized List<ObservationRecord> readMessages() {
         List<ObservationRecord> loadedMessages = new ArrayList<>();
         String sql = "SELECT * FROM messages";
