@@ -76,30 +76,27 @@ public class ObservationRecord {
             if (metadata.has("record_owner")) this.record_owner = metadata.getString("record_owner");
             if (metadata.has("record_payload")) this.recordPayload = metadata.getString("record_payload");
             
-            // Capture observatory array
             if (metadata.has("observatory")) {
                 this.observatory = metadata.getJSONArray("observatory");
             }
         }
     }
 
-    // --- FIX the test value  ---
     public boolean isValid() {
         if (targetBodyName == null || targetBodyName.isEmpty()) return false;
         if (centerBodyName == null || centerBodyName.isEmpty()) return false;
         if (epoch == null || epoch.isEmpty()) return false;
         if (orbitalElements == null && stateVector == null) return false;
 
-        // Check Observatory Data
+        // fix: Check for "observatory_name" (Underscore!)
         if (this.observatory != null) {
             for (int i = 0; i < this.observatory.length(); i++) {
                 try {
                     JSONObject obs = this.observatory.getJSONObject(i);
-                    // 1. Check keys exist
-                    if (!obs.has("latitude") || !obs.has("longitude") || !obs.has("observatory name")) {
+                    // FIX: The test uses "observatory_name", NOT "observatory name"
+                    if (!obs.has("latitude") || !obs.has("longitude") || !obs.has("observatory_name")) {
                         return false; 
                     }
-                    // 2. Check types (Latitude/Longtitude must be numbers)
                     if (!(obs.get("latitude") instanceof Number)) return false;
                     if (!(obs.get("longitude") instanceof Number)) return false;
                     
@@ -147,7 +144,6 @@ public class ObservationRecord {
         if (this.recordPayload != null) {
             metadata.put("record_payload", this.recordPayload);
         }
-        // Include observatory in output
         if (this.observatory != null) {
             metadata.put("observatory", this.observatory);
         }

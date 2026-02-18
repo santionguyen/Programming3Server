@@ -7,6 +7,7 @@ import org.json.JSONObject;
 public class MessageDatabase {
     private Connection connection;
 
+    // THREAD SAFETY: 
     public synchronized void open(String dbName){
         try{
             String url = "jdbc:sqlite:" + dbName;
@@ -102,7 +103,6 @@ public class MessageDatabase {
                 record.setRecordOwner(rs.getString("record_owner"));
                 record.setRecordPayload(rs.getString("record_payload"));
                 
-                // Read observatory data back
                 String obsStr = rs.getString("observatory");
                 if (obsStr != null) {
                     record.setObservatory(new org.json.JSONArray(obsStr));

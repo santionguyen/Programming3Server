@@ -9,7 +9,7 @@ import javax.net.ssl.*;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.List;
-import java.util.concurrent.Executors;
+import java.util.concurrent.Executors; // Thread Pool Import
 import java.util.stream.Collectors;
 
 import org.json.JSONArray;
@@ -29,7 +29,7 @@ import org.w3c.dom.NodeList;
 
 public class Server implements HttpHandler {
     
-    // Thread-safe list
+    // THREAD SAFETY: Synchronized List
     public List<ObservationRecord> messages = Collections.synchronizedList(new ArrayList<>());
     public MessageDatabase db = new MessageDatabase();
 
@@ -40,7 +40,7 @@ public class Server implements HttpHandler {
         }
         db.open(dbPath);
         db.createTable();
-        // Add all at once (thread-safe)
+        // Safe to read all at once
         this.messages.addAll(db.readMessages());
     }
 
@@ -90,7 +90,7 @@ public class Server implements HttpHandler {
                 }
                 
                 if (newRecord.isValid()) {
-                    // WEATHER LOGIC: Look inside the parsed record, not the raw JSON
+                    // Weather Logic
                     JSONArray observatories = newRecord.getObservatory();
                     if (observatories != null) {
                         for (int i = 0; i < observatories.length(); i++) {
@@ -98,7 +98,6 @@ public class Server implements HttpHandler {
                             if (obs.has("latitude") && obs.has("longitude")) {
                                 JSONObject weather = getWeatherInfo(obs.getDouble("latitude"), obs.getDouble("longitude"));
                                 if (weather != null) {
-                                    // Add weather to the existing observatory object
                                     obs.put("weather", weather);
                                 }
                             }
@@ -121,7 +120,7 @@ public class Server implements HttpHandler {
 
         } else if (exchange.getRequestMethod().equalsIgnoreCase("GET")) {
             JSONArray responseArray = new JSONArray();
-            // Synchronize on the list to avoid ConcurrentModificationException
+            // THREAD SAFETY: Synchronize block for iteration
             synchronized(messages) {
                 if (messages.isEmpty()) {
                     exchange.sendResponseHeaders(204, -1);
@@ -153,7 +152,6 @@ public class Server implements HttpHandler {
         }
     }
 
-    // Weather Helper
     private JSONObject getWeatherInfo(double latitude, double longitude) {
         try {
             DocumentBuilderFactory factory = DocumentBuilderFactory.newInstance();
@@ -219,7 +217,7 @@ public class Server implements HttpHandler {
             HttpContext context = server.createContext("/datarecord", myServer); 
             context.setAuthenticator(authenticator);
 
-            //Use Thread Pool
+            // Update: USE THREAD POOL!
             server.setExecutor(Executors.newCachedThreadPool());
             
             server.start();
