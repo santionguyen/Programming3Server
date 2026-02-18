@@ -7,7 +7,9 @@ import java.nio.charset.StandardCharsets;
 import java.security.KeyStore;
 import javax.net.ssl.*;
 import java.util.ArrayList;
+import java.util.Collections; // Import for thread safety
 import java.util.List;
+import java.util.concurrent.Executors; // Import for Thread Pool
 import java.util.stream.Collectors;
 
 import org.json.JSONArray;
@@ -17,18 +19,19 @@ import java.util.UUID;
 
 public class Server implements HttpHandler {
     
-    public List<ObservationRecord> messages = new ArrayList<>();
+    // WEEK 5 FIX: Use a synchronized (thread-safe) list
+    public List<ObservationRecord> messages = Collections.synchronizedList(new ArrayList<>());
     public MessageDatabase db = new MessageDatabase();
 
     public Server(){
-        // 1.Use the test database if provided
         String dbPath = System.getenv("DATABASE_PATH");
         if (dbPath == null) {
             dbPath = "server.db";
         }
         db.open(dbPath);
         db.createTable();
-        this.messages = db.readMessages();
+        // Since readMessages is synchronized now, this is safe
+        this.messages.addAll(db.readMessages());
     }
 
     private static SSLContext myServerSSLContext(String file, String pass) throws Exception {
@@ -61,26 +64,24 @@ public class Server implements HttpHandler {
                 newRecord.setRecordTimeReceived(System.currentTimeMillis());
                 newRecord.setId(UUID.randomUUID().toString());
                 
-                // 2. NICKNAME FIX: look up nickname from DB!
                 String ownerToSet = "unknown";
                 if (exchange.getPrincipal() != null) {
                     String username = exchange.getPrincipal().getUsername();
                     String nickname = db.getUserNickname(username);
                     if (nickname != null && !nickname.isEmpty()) {
-                        ownerToSet = nickname; // Use nickname if found
+                        ownerToSet = nickname; 
                     } else {
-                        ownerToSet = username; // Fallback to username
+                        ownerToSet = username;
                     }
                 }
                 
-                // Only overwrite if the JSON didn't provide one (usually tests don't)
                 if (newRecord.getRecordOwner() == null || newRecord.getRecordOwner().isEmpty()) {
                     newRecord.setRecordOwner(ownerToSet);
                 }
                 
                 if (newRecord.isValid()) {
                     messages.add(newRecord);
-                    db.addMessage(newRecord);
+                    db.addMessage(newRecord); // This method is now synchronized in DB
                     exchange.sendResponseHeaders(200, -1);
                 } else {
                     sendResponse(exchange, 400, "Invalid content");
@@ -94,23 +95,26 @@ public class Server implements HttpHandler {
             }
 
         } else if (exchange.getRequestMethod().equalsIgnoreCase("GET")) {
-            if (messages.isEmpty()) {
-                exchange.sendResponseHeaders(204, -1);
-            } else {
-                JSONArray responseArray = new JSONArray();
+            // Thread-safe iteration over the synchronized list
+            JSONArray responseArray = new JSONArray();
+            synchronized(messages) {
+                if (messages.isEmpty()) {
+                    exchange.sendResponseHeaders(204, -1);
+                    return;
+                }
                 for (ObservationRecord record : messages) {
                     responseArray.put(record.toJSON());
                 }
-                
-                String responseString = responseArray.toString();
-                byte[] bytes = responseString.getBytes(StandardCharsets.UTF_8);
-                
-                exchange.getResponseHeaders().add("Content-Type", "application/json");
-                exchange.sendResponseHeaders(200, bytes.length);
-                try (OutputStream os = exchange.getResponseBody()) {
-                    os.write(bytes);
-                }
-            } 
+            }
+            
+            String responseString = responseArray.toString();
+            byte[] bytes = responseString.getBytes(StandardCharsets.UTF_8);
+            
+            exchange.getResponseHeaders().add("Content-Type", "application/json");
+            exchange.sendResponseHeaders(200, bytes.length);
+            try (OutputStream os = exchange.getResponseBody()) {
+                os.write(bytes);
+            }
         } else {
             exchange.sendResponseHeaders(405, -1);
         }
@@ -158,7 +162,9 @@ public class Server implements HttpHandler {
             HttpContext context = server.createContext("/datarecord", myServer); 
             context.setAuthenticator(authenticator);
 
-            server.setExecutor(null);
+            // WEEK 5 FIX: Use a Thread Pool instead of null
+            server.setExecutor(Executors.newCachedThreadPool());
+            
             server.start();
             System.out.println("HTTPS Server has started on port 8001");
 

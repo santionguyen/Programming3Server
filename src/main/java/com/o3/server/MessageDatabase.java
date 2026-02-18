@@ -7,7 +7,8 @@ import org.json.JSONObject;
 public class MessageDatabase {
     private Connection connection;
 
-    public void open(String dbName){
+    // Synchronized to prevent thread conflicts during connection
+    public synchronized void open(String dbName){
         try{
             String url = "jdbc:sqlite:" + dbName;
             this.connection = DriverManager.getConnection(url);
@@ -16,10 +17,11 @@ public class MessageDatabase {
         }
     }
     
-    public void createTable(){
+    // Synchronized table creation
+    public synchronized void createTable(){
         try{
             Statement statement = connection.createStatement();
-            // Added record_payload here
+            // WEEK 5: Added 'observatory' column
             String sql = "CREATE TABLE IF NOT EXISTS messages (" +
                          "id TEXT PRIMARY KEY, " +
                          "record_time_received INTEGER, " + 
@@ -29,7 +31,8 @@ public class MessageDatabase {
                          "epoch TEXT, " +
                          "orbital_elements TEXT, " +
                          "state_vector TEXT, " +
-                         "record_payload TEXT" + 
+                         "record_payload TEXT, " + 
+                         "observatory TEXT" + 
                          ")";
             statement.execute(sql);
 
@@ -45,11 +48,12 @@ public class MessageDatabase {
         }
     }
     
-    public void addMessage(ObservationRecord record){
-        // Added record_payload here
+    // Synchronized insertion
+    public synchronized void addMessage(ObservationRecord record){
+        // WEEK 5: Insert 'observatory'
         String sql = "INSERT INTO messages (id, record_time_received, record_owner, " + 
-                     "target_body_name, center_body_name, epoch, orbital_elements, state_vector, record_payload) " + 
-                     "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)";
+                     "target_body_name, center_body_name, epoch, orbital_elements, state_vector, record_payload, observatory) " + 
+                     "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)";
         try{
             PreparedStatement pstmt = connection.prepareStatement(sql);
             pstmt.setString(1, record.getId());
@@ -65,7 +69,11 @@ public class MessageDatabase {
             if (record.getStateVector() != null) pstmt.setString(8, record.getStateVector().toString());
             else pstmt.setString(8, null);
 
-            pstmt.setString(9, record.getRecordPayload()); // Save Payload
+            pstmt.setString(9, record.getRecordPayload()); 
+            
+            // Save observatory as a JSON string
+            if (record.getObservatory() != null) pstmt.setString(10, record.getObservatory().toString());
+            else pstmt.setString(10, null);
 
             pstmt.executeUpdate();
             pstmt.close();
@@ -74,7 +82,8 @@ public class MessageDatabase {
         }
     }
     
-    public List<ObservationRecord> readMessages() {
+    // Synchronized reading
+    public synchronized List<ObservationRecord> readMessages() {
         List<ObservationRecord> loadedMessages = new ArrayList<>();
         String sql = "SELECT * FROM messages";
         try {
@@ -96,8 +105,13 @@ public class MessageDatabase {
                 record.setId(rs.getString("id"));
                 record.setRecordTimeReceived(rs.getLong("record_time_received"));
                 record.setRecordOwner(rs.getString("record_owner"));
-                // Read payload back
                 record.setRecordPayload(rs.getString("record_payload"));
+                
+                // Read observatory data back
+                String obsStr = rs.getString("observatory");
+                if (obsStr != null) {
+                    record.setObservatory(new org.json.JSONArray(obsStr));
+                }
 
                 loadedMessages.add(record);
             }
@@ -108,8 +122,7 @@ public class MessageDatabase {
         return loadedMessages;
     }
 
-    // NEW METHOD: Get Nickname from Username
-    public String getUserNickname(String username) {
+    public synchronized String getUserNickname(String username) {
         String sql = "SELECT nickname FROM users WHERE username = ?";
         try {
             PreparedStatement pstmt = connection.prepareStatement(sql);
@@ -124,7 +137,7 @@ public class MessageDatabase {
         return null;
     }
 
-    public boolean registerUser(User user) {
+    public synchronized boolean registerUser(User user) {
         String sql = "INSERT INTO users(username, password, email, nickname) VALUES(?,?,?,?)";
         try {
             PreparedStatement pstmt = connection.prepareStatement(sql);
@@ -138,7 +151,7 @@ public class MessageDatabase {
         } catch (SQLException e) { return false; }
     }
 
-    public boolean validateUser(String username, String password) {
+    public synchronized boolean validateUser(String username, String password) {
         String sql = "SELECT password FROM users WHERE username = ?";
         try {
             PreparedStatement pstmt = connection.prepareStatement(sql);
