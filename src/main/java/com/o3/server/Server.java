@@ -9,7 +9,7 @@ import javax.net.ssl.*;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.List;
-import java.util.concurrent.Executors; // Thread Pool Import
+import java.util.concurrent.Executors;
 import java.util.stream.Collectors;
 
 import org.json.JSONArray;
@@ -29,7 +29,6 @@ import org.w3c.dom.NodeList;
 
 public class Server implements HttpHandler {
     
-    // THREAD SAFETY: Synchronized List
     public List<ObservationRecord> messages = Collections.synchronizedList(new ArrayList<>());
     public MessageDatabase db = new MessageDatabase();
 
@@ -40,7 +39,6 @@ public class Server implements HttpHandler {
         }
         db.open(dbPath);
         db.createTable();
-        // Safe to read all at once
         this.messages.addAll(db.readMessages());
     }
 
@@ -90,17 +88,21 @@ public class Server implements HttpHandler {
                 }
                 
                 if (newRecord.isValid()) {
-                    // Weather Logic
+                    // FEATURE 5: weather logic 
                     JSONArray observatories = newRecord.getObservatory();
                     if (observatories != null) {
                         for (int i = 0; i < observatories.length(); i++) {
                             JSONObject obs = observatories.getJSONObject(i);
+                            JSONArray weatherArray = new JSONArray(); // Spec expects an array
+
                             if (obs.has("latitude") && obs.has("longitude")) {
                                 JSONObject weather = getWeatherInfo(obs.getDouble("latitude"), obs.getDouble("longitude"));
-                                if (weather != null) {
-                                    obs.put("weather", weather);
+                                if (weather != null && weather.length() > 0) {
+                                    weatherArray.put(weather);
                                 }
                             }
+                            // Attach the array (empty or populated) to the observatory
+                            obs.put("weather", weatherArray);
                         }
                     }
 
@@ -120,7 +122,6 @@ public class Server implements HttpHandler {
 
         } else if (exchange.getRequestMethod().equalsIgnoreCase("GET")) {
             JSONArray responseArray = new JSONArray();
-            // THREAD SAFETY: Synchronize block for iteration
             synchronized(messages) {
                 if (messages.isEmpty()) {
                     exchange.sendResponseHeaders(204, -1);
@@ -152,11 +153,12 @@ public class Server implements HttpHandler {
         }
     }
 
+    // FeATURE 5: XML FMI FMI Weather Parser
     private JSONObject getWeatherInfo(double latitude, double longitude) {
         try {
             DocumentBuilderFactory factory = DocumentBuilderFactory.newInstance();
             DocumentBuilder builder = factory.newDocumentBuilder();
-            URI uri = new URI("http://127.0.0.1:4001/wfs?latlon="+latitude+","+longitude);
+            URI uri = new URI("http://127.0.0.1:4001/wfs?latlon=" + latitude + "," + longitude);
             URL url = uri.toURL();
             InputStream inputStream = url.openStream();
             Document document = builder.parse(inputStream);
@@ -172,14 +174,18 @@ public class Server implements HttpHandler {
                     String parameterName = bsWfsElement.getElementsByTagName("BsWfs:ParameterName").item(0).getTextContent();
                     String parameterValue = bsWfsElement.getElementsByTagName("BsWfs:ParameterValue").item(0).getTextContent();
                     
-                    if (parameterName.equals("temperatureInKelvins")) weatherInfo.put("temperatureInKelvins", parameterValue);
-                    else if (parameterName.equals("cloudinessPercentance")) weatherInfo.put("cloudinessPercentance", parameterValue);
-                    else if (parameterName.equals("bagroundLightVolume")) weatherInfo.put("bagroundLightVolume", parameterValue);
+                    // Convert strings from XML FMI Mock into Doubles for JSON compliance
+                    if (parameterName.equals("temperatureInKelvins")) 
+                        weatherInfo.put("temperatureInKelvins", Double.parseDouble(parameterValue));
+                    else if (parameterName.equals("cloudinessPercentance") || parameterName.equals("cloudinessPercentage")) 
+                        weatherInfo.put("cloudinessPercentance", Double.parseDouble(parameterValue));
+                    else if (parameterName.equals("bagroundLightVolume") || parameterName.equals("backgroundLightVolume")) 
+                        weatherInfo.put("bagroundLightVolume", Double.parseDouble(parameterValue));
                 }
             }
             return weatherInfo;
         } catch (Exception e) {
-            return null;
+            return null; // Return nullif the weather server is offline
         }
     }
 
@@ -217,9 +223,7 @@ public class Server implements HttpHandler {
             HttpContext context = server.createContext("/datarecord", myServer); 
             context.setAuthenticator(authenticator);
 
-            // Update: USE THREAD POOL!
             server.setExecutor(Executors.newCachedThreadPool());
-            
             server.start();
             System.out.println("HTTPS Server has started on port 8001");
 
