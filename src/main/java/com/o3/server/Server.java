@@ -2,7 +2,10 @@ package com.o3.server;
 
 import com.sun.net.httpserver.*;
 import java.io.*;
+import java.net.HttpURLConnection;
 import java.net.InetSocketAddress;
+import java.net.URI;
+import java.net.URL;
 import java.nio.charset.StandardCharsets;
 import java.security.KeyStore;
 import javax.net.ssl.*;
@@ -16,15 +19,6 @@ import org.json.JSONArray;
 import org.json.JSONException;
 import org.json.JSONObject;
 import java.util.UUID;
-
-// Weather imports
-import java.net.URI;
-import java.net.URL;
-import javax.xml.parsers.DocumentBuilder;
-import javax.xml.parsers.DocumentBuilderFactory;
-import org.w3c.dom.Document;
-import org.w3c.dom.Node;
-import org.w3c.dom.NodeList;
 
 public class Server implements HttpHandler {
     
@@ -87,7 +81,6 @@ public class Server implements HttpHandler {
                 }
                 
                 if (newRecord.isValid()) {
-                    // FEATURE 5 update: Weather Parsing
                     JSONArray observatories = newRecord.getObservatory();
                     if (observatories != null) {
                         for (int i = 0; i < observatories.length(); i++) {
@@ -95,7 +88,7 @@ public class Server implements HttpHandler {
                             
                             if (obs.has("latitude") && obs.has("longitude")) {
                                 JSONObject weather = getWeatherInfo(obs.getDouble("latitude"), obs.getDouble("longitude"));
-                                // Only attach if we successfully parsed data
+                                // Only overwrite if we successfully pulled real data
                                 if (weather != null && weather.length() > 0) {
                                     obs.put("weather", weather);
                                 } else if (!obs.has("weather")) {
@@ -154,53 +147,75 @@ public class Server implements HttpHandler {
         }
     }
 
-    // XML PARSER FIX
+    // WEATHER PARSER
     private JSONObject getWeatherInfo(double latitude, double longitude) {
         try {
-            DocumentBuilderFactory factory = DocumentBuilderFactory.newInstance();
-            DocumentBuilder builder = factory.newDocumentBuilder();
-            URI uri = new URI("http://127.0.0.1:4001/wfs?latlon=" + latitude + "," + longitude);
-            URL url = uri.toURL();
-            InputStream inputStream = url.openStream();
-            Document document = builder.parse(inputStream);
-            document.getDocumentElement().normalize();
+            URL url = new URI("http://localhost:4001/wfs?latlon=" + latitude + "," + longitude).toURL();
+            HttpURLConnection conn = (HttpURLConnection) url.openConnection();
+            conn.setRequestMethod("GET");
+            conn.setConnectTimeout(3000); // Prevent hanging
+            conn.setReadTimeout(3000);
+            
+            BufferedReader in = new BufferedReader(new InputStreamReader(conn.getInputStream()));
+            String response = in.lines().collect(Collectors.joining("\n"));
+            in.close();
             
             JSONObject weatherInfo = new JSONObject();
             
-            // Get all nodes to bypass namespace strictness
-            NodeList allNodes = document.getElementsByTagName("*");
-            String currentName = null;
-            
-            for (int i = 0; i < allNodes.getLength(); i++) {
-                Node node = allNodes.item(i);
-                String nodeName = node.getNodeName();
-                
-                // Track the ParameterName
-                if (nodeName.endsWith("ParameterName")) {
-                    currentName = node.getTextContent().trim();
-                } 
-                // Once hit the ParameterValue, map it to the tracked Name
-                else if (nodeName.endsWith("ParameterValue") && currentName != null) {
-                    String valStr = node.getTextContent().trim();
-                    try {
-                        double val = Double.parseDouble(valStr);
-                        if (currentName.equalsIgnoreCase("temperatureInKelvins")) {
-                            weatherInfo.put("temperature_in_kelvins", val);
-                        } else if (currentName.equalsIgnoreCase("cloudinessPercentance") || currentName.equalsIgnoreCase("cloudinessPercentage")) {
-                            weatherInfo.put("cloudiness_percentage", val);
-                        } else if (currentName.equalsIgnoreCase("bagroundLightVolume") || currentName.equalsIgnoreCase("backgroundLightVolume")) {
-                            weatherInfo.put("background_light_volume", val);
-                        }
-                    } catch (NumberFormatException nfe) {
-                        // Ignore unparseable values
+            // 1. Try to parse as XML using robust string splitting
+            String[] lines = response.split("<");
+            String currentName = "";
+            for (String chunk : lines) {
+                String lowerChunk = chunk.toLowerCase();
+        
+                if (lowerChunk.contains("parametername>")) {
+                    int idx = chunk.indexOf(">");
+                    if (idx != -1) {
+                        currentName = chunk.substring(idx + 1).replace("_", "").trim().toLowerCase();
                     }
-                    currentName = null; // Reset for the next pair
+                } 
+                // Find the value tag and match it to the name
+                else if (lowerChunk.contains("parametervalue>") && !currentName.isEmpty()) {
+                    int idx = chunk.indexOf(">");
+                    if (idx != -1) {
+                        // Strip non-numeric characters just in case it returns "263.15 K"
+                        String valStr = chunk.substring(idx + 1).trim().replaceAll("[^\\d.-]", "");
+                        if (!valStr.isEmpty()) {
+                            double val = Double.parseDouble(valStr);
+                            if (currentName.contains("temperature") || currentName.contains("temp")) {
+                                weatherInfo.put("temperature_in_kelvins", val);
+                            } else if (currentName.contains("cloud")) {
+                                weatherInfo.put("cloudiness_percentage", val);
+                            } else if (currentName.contains("light") || currentName.contains("background") || currentName.contains("baground")) {
+                                weatherInfo.put("background_light_volume", val);
+                            }
+                        }
+                    }
+                    currentName = ""; // Reset for the next pair
                 }
             }
+            
+            // 2. Fallback: If the mock server was updated to return JSON instead of XML
+            if (weatherInfo.length() == 0) {
+                try {
+                    JSONObject jsonResp = new JSONObject(response);
+                    for (String key : jsonResp.keySet()) {
+                        String lowerKey = key.toLowerCase();
+                        double val = jsonResp.optDouble(key, 0.0);
+                        if (lowerKey.contains("temperature") || lowerKey.contains("temp")) {
+                            weatherInfo.put("temperature_in_kelvins", val);
+                        } else if (lowerKey.contains("cloud")) {
+                            weatherInfo.put("cloudiness_percentage", val);
+                        } else if (lowerKey.contains("light") || lowerKey.contains("background") || lowerKey.contains("baground")) {
+                            weatherInfo.put("background_light_volume", val);
+                        }
+                    }
+                } catch (Exception ignored) {}
+            }
+            
             return weatherInfo;
         } catch (Exception e) {
-            System.out.println("Weather fetch failed: " + e.getMessage());
-            return null; 
+            return null;
         }
     }
 
