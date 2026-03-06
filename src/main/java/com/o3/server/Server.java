@@ -23,7 +23,6 @@ import java.net.URL;
 import javax.xml.parsers.DocumentBuilder;
 import javax.xml.parsers.DocumentBuilderFactory;
 import org.w3c.dom.Document;
-import org.w3c.dom.Element;
 import org.w3c.dom.Node;
 import org.w3c.dom.NodeList;
 
@@ -88,7 +87,7 @@ public class Server implements HttpHandler {
                 }
                 
                 if (newRecord.isValid()) {
-                    // FEATURE 5 update: Weather must be a JSONObject, NOT a JSONArray.
+                    // FEATURE 5 update: Weather Parsing
                     JSONArray observatories = newRecord.getObservatory();
                     if (observatories != null) {
                         for (int i = 0; i < observatories.length(); i++) {
@@ -96,12 +95,13 @@ public class Server implements HttpHandler {
                             
                             if (obs.has("latitude") && obs.has("longitude")) {
                                 JSONObject weather = getWeatherInfo(obs.getDouble("latitude"), obs.getDouble("longitude"));
-                                if (weather != null) {
-                                    obs.put("weather", weather); // Attach as Object
-                                } else {
-                                    obs.put("weather", new JSONObject()); // Empty Object fallback
+                                // Only attach if we successfully parsed data
+                                if (weather != null && weather.length() > 0) {
+                                    obs.put("weather", weather);
+                                } else if (!obs.has("weather")) {
+                                    obs.put("weather", new JSONObject()); 
                                 }
-                            } else {
+                            } else if (!obs.has("weather")) {
                                 obs.put("weather", new JSONObject());
                             }
                         }
@@ -154,7 +154,7 @@ public class Server implements HttpHandler {
         }
     }
 
-    // FEATURE 5 update: Output keys uses snake_case to match the automated tests
+    // XML PARSER FIX
     private JSONObject getWeatherInfo(double latitude, double longitude) {
         try {
             DocumentBuilderFactory factory = DocumentBuilderFactory.newInstance();
@@ -164,28 +164,42 @@ public class Server implements HttpHandler {
             InputStream inputStream = url.openStream();
             Document document = builder.parse(inputStream);
             document.getDocumentElement().normalize();
-            NodeList nodeList = document.getElementsByTagName("wfs:member");
+            
             JSONObject weatherInfo = new JSONObject();
             
-            for (int i = 0; i < nodeList.getLength(); i++) {
-                Node node = nodeList.item(i);
-                if (node.getNodeType() == Node.ELEMENT_NODE) {
-                    Element element = (Element) node;
-                    Element bsWfsElement = (Element) element.getElementsByTagName("BsWfs:BsWfsElement").item(0);
-                    String parameterName = bsWfsElement.getElementsByTagName("BsWfs:ParameterName").item(0).getTextContent();
-                    String parameterValue = bsWfsElement.getElementsByTagName("BsWfs:ParameterValue").item(0).getTextContent();
-                    
-                    // Converted keys to snake_case as expected by the JUnit tests
-                    if (parameterName.equals("temperatureInKelvins")) 
-                        weatherInfo.put("temperature_in_kelvins", Double.parseDouble(parameterValue));
-                    else if (parameterName.equals("cloudinessPercentance") || parameterName.equals("cloudinessPercentage")) 
-                        weatherInfo.put("cloudiness_percentage", Double.parseDouble(parameterValue));
-                    else if (parameterName.equals("bagroundLightVolume") || parameterName.equals("backgroundLightVolume")) 
-                        weatherInfo.put("background_light_volume", Double.parseDouble(parameterValue));
+            // Get all nodes to bypass namespace strictness
+            NodeList allNodes = document.getElementsByTagName("*");
+            String currentName = null;
+            
+            for (int i = 0; i < allNodes.getLength(); i++) {
+                Node node = allNodes.item(i);
+                String nodeName = node.getNodeName();
+                
+                // Track the ParameterName
+                if (nodeName.endsWith("ParameterName")) {
+                    currentName = node.getTextContent().trim();
+                } 
+                // Once hit the ParameterValue, map it to the tracked Name
+                else if (nodeName.endsWith("ParameterValue") && currentName != null) {
+                    String valStr = node.getTextContent().trim();
+                    try {
+                        double val = Double.parseDouble(valStr);
+                        if (currentName.equalsIgnoreCase("temperatureInKelvins")) {
+                            weatherInfo.put("temperature_in_kelvins", val);
+                        } else if (currentName.equalsIgnoreCase("cloudinessPercentance") || currentName.equalsIgnoreCase("cloudinessPercentage")) {
+                            weatherInfo.put("cloudiness_percentage", val);
+                        } else if (currentName.equalsIgnoreCase("bagroundLightVolume") || currentName.equalsIgnoreCase("backgroundLightVolume")) {
+                            weatherInfo.put("background_light_volume", val);
+                        }
+                    } catch (NumberFormatException nfe) {
+                        // Ignore unparseable values
+                    }
+                    currentName = null; // Reset for the next pair
                 }
             }
             return weatherInfo;
         } catch (Exception e) {
+            System.out.println("Weather fetch failed: " + e.getMessage());
             return null; 
         }
     }
