@@ -88,21 +88,22 @@ public class Server implements HttpHandler {
                 }
                 
                 if (newRecord.isValid()) {
-                    // FEATURE 5: weather logic 
+                    // FEATURE 5 update: Weather must be a JSONObject, NOT a JSONArray.
                     JSONArray observatories = newRecord.getObservatory();
                     if (observatories != null) {
                         for (int i = 0; i < observatories.length(); i++) {
                             JSONObject obs = observatories.getJSONObject(i);
-                            JSONArray weatherArray = new JSONArray(); // Spec expects an array
-
+                            
                             if (obs.has("latitude") && obs.has("longitude")) {
                                 JSONObject weather = getWeatherInfo(obs.getDouble("latitude"), obs.getDouble("longitude"));
-                                if (weather != null && weather.length() > 0) {
-                                    weatherArray.put(weather);
+                                if (weather != null) {
+                                    obs.put("weather", weather); // Attach as Object
+                                } else {
+                                    obs.put("weather", new JSONObject()); // Empty Object fallback
                                 }
+                            } else {
+                                obs.put("weather", new JSONObject());
                             }
-                            // Attach the array (empty or populated) to the observatory
-                            obs.put("weather", weatherArray);
                         }
                     }
 
@@ -153,7 +154,7 @@ public class Server implements HttpHandler {
         }
     }
 
-    // FeATURE 5: XML FMI FMI Weather Parser
+    // FEATURE 5 update: Output keys uses snake_case to match the automated tests
     private JSONObject getWeatherInfo(double latitude, double longitude) {
         try {
             DocumentBuilderFactory factory = DocumentBuilderFactory.newInstance();
@@ -174,18 +175,18 @@ public class Server implements HttpHandler {
                     String parameterName = bsWfsElement.getElementsByTagName("BsWfs:ParameterName").item(0).getTextContent();
                     String parameterValue = bsWfsElement.getElementsByTagName("BsWfs:ParameterValue").item(0).getTextContent();
                     
-                    // Convert strings from XML FMI Mock into Doubles for JSON compliance
+                    // Converted keys to snake_case as expected by the JUnit tests
                     if (parameterName.equals("temperatureInKelvins")) 
-                        weatherInfo.put("temperatureInKelvins", Double.parseDouble(parameterValue));
+                        weatherInfo.put("temperature_in_kelvins", Double.parseDouble(parameterValue));
                     else if (parameterName.equals("cloudinessPercentance") || parameterName.equals("cloudinessPercentage")) 
-                        weatherInfo.put("cloudinessPercentance", Double.parseDouble(parameterValue));
+                        weatherInfo.put("cloudiness_percentage", Double.parseDouble(parameterValue));
                     else if (parameterName.equals("bagroundLightVolume") || parameterName.equals("backgroundLightVolume")) 
-                        weatherInfo.put("bagroundLightVolume", Double.parseDouble(parameterValue));
+                        weatherInfo.put("background_light_volume", Double.parseDouble(parameterValue));
                 }
             }
             return weatherInfo;
         } catch (Exception e) {
-            return null; // Return nullif the weather server is offline
+            return null; 
         }
     }
 
