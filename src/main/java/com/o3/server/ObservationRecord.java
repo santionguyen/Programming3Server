@@ -22,6 +22,10 @@ public class ObservationRecord {
     private JSONArray observatory; 
     private JSONObject orbitalElements;
     private JSONObject stateVector; 
+    
+    // FEATURE 7 FIELDS
+    private String updateReason;
+    private String edited;
 
     public ObservationRecord(JSONObject json) throws JSONException {
         if (json.has("target_body_name") && !(json.get("target_body_name") instanceof String)) {
@@ -69,10 +73,11 @@ public class ObservationRecord {
             this.id = metadata.optString("id");
             if (metadata.has("record_owner")) this.record_owner = metadata.getString("record_owner");
             if (metadata.has("record_payload")) this.recordPayload = metadata.getString("record_payload");
+            if (metadata.has("observatory")) this.observatory = metadata.getJSONArray("observatory");
             
-            if (metadata.has("observatory")) {
-                this.observatory = metadata.getJSONArray("observatory");
-            }
+            // Extract Feature 7 fields if they exist
+            if (metadata.has("update_reason")) this.updateReason = metadata.getString("update_reason");
+            if (metadata.has("edited")) this.edited = metadata.getString("edited");
         }
     }
 
@@ -91,13 +96,11 @@ public class ObservationRecord {
                     }
                     if (!(obs.get("latitude") instanceof Number)) return false;
                     if (!(obs.get("longitude") instanceof Number)) return false;
-                    
                 } catch (JSONException e) {
                     return false;
                 }
             }
         }
-
         return true;
     }
 
@@ -108,6 +111,12 @@ public class ObservationRecord {
     public void setRecordOwner(String owner) { this.record_owner = owner; }
     public void setRecordPayload(String payload) { this.recordPayload = payload; }
     public void setObservatory(JSONArray observatory) { this.observatory = observatory; }
+    
+    // FEATURE 7 GETTERS/SETTERS
+    public String getUpdateReason() { return this.updateReason; }
+    public void setUpdateReason(String r) { this.updateReason = r; }
+    public String getEdited() { return this.edited; }
+    public void setEdited(String e) { this.edited = e; }
     
     public String getId(){ return this.id; }
     public String getRecordOwner(){ return this.record_owner; }
@@ -128,7 +137,6 @@ public class ObservationRecord {
         
         JSONObject metadata = new JSONObject();
         
-        // FEATURE 6 FIX: Parse the ID as an Integer since the test uses getInt("id")!
         if (this.id != null && !this.id.isEmpty()) {
             try {
                 metadata.put("id", Integer.parseInt(this.id));
@@ -142,12 +150,13 @@ public class ObservationRecord {
             DateTimeFormatter formatter = DateTimeFormatter.ofPattern("yyyy-MM-dd'T'HH:mm:ss.SSSX");
             metadata.put("record_time_received", this.record_time_received.format(formatter));
         }
-        if (this.recordPayload != null) {
-            metadata.put("record_payload", this.recordPayload);
-        }
-        if (this.observatory != null) {
-            metadata.put("observatory", this.observatory);
-        }
+        if (this.recordPayload != null) metadata.put("record_payload", this.recordPayload);
+        if (this.observatory != null) metadata.put("observatory", this.observatory);
+        
+        // FEATURE 7: Append edited metadata if present
+        if (this.updateReason != null) metadata.put("update_reason", this.updateReason);
+        if (this.edited != null) metadata.put("edited", this.edited);
+        
         json.put("metadata", metadata);
         
         if (this.orbitalElements != null) json.put("orbital_elements", this.orbitalElements);

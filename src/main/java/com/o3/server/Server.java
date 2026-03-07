@@ -59,7 +59,10 @@ public class Server implements HttpHandler {
 
     @Override
     public void handle(HttpExchange exchange) throws IOException {
-        if (exchange.getRequestMethod().equalsIgnoreCase("POST")) {
+        String method = exchange.getRequestMethod();
+        String path = exchange.getRequestURI().getPath();
+
+        if (method.equalsIgnoreCase("POST")) {
             InputStream stream = exchange.getRequestBody();
             String text = new BufferedReader(new InputStreamReader(stream, StandardCharsets.UTF_8))
                     .lines().collect(Collectors.joining("\n"));
@@ -70,8 +73,6 @@ public class Server implements HttpHandler {
                 ObservationRecord newRecord = new ObservationRecord(jsonMsg);
                 
                 newRecord.setRecordTimeReceived(System.currentTimeMillis());
-                
-                // FEATURE 6 FIX: Generate an integer ID instead of a UUID String
                 int newId = java.util.concurrent.ThreadLocalRandom.current().nextInt(1, Integer.MAX_VALUE);
                 newRecord.setId(String.valueOf(newId));
                 
@@ -93,12 +94,10 @@ public class Server implements HttpHandler {
                 if (newRecord.isValid()) {
                     JSONArray observatories = newRecord.getObservatory();
                     if (observatories != null) {
-                        
                         Map<String, JSONObject> weatherCache = new HashMap<>();
 
                         for (int i = 0; i < observatories.length(); i++) {
                             JSONObject obs = observatories.getJSONObject(i);
-                            
                             if (obs.has("weather")) {
                                 if (obs.has("latitude") && obs.has("longitude")) {
                                     double lat = obs.getDouble("latitude");
@@ -106,7 +105,6 @@ public class Server implements HttpHandler {
                                     String cacheKey = lat + "," + lon;
                                     
                                     JSONObject weather = null;
-                                    
                                     if (weatherCache.containsKey(cacheKey)) {
                                         weather = weatherCache.get(cacheKey);
                                     } else {
@@ -142,7 +140,7 @@ public class Server implements HttpHandler {
                 sendResponse(exchange, 500, "Internal Server Error");
             }
 
-        } else if (exchange.getRequestMethod().equalsIgnoreCase("GET")) {
+        } else if (method.equalsIgnoreCase("GET")) {
             JSONArray responseArray = new JSONArray();
             synchronized(messages) {
                 if (messages.isEmpty()) {
@@ -161,6 +159,112 @@ public class Server implements HttpHandler {
             exchange.sendResponseHeaders(200, bytes.length);
             try (OutputStream os = exchange.getResponseBody()) {
                 os.write(bytes);
+            }
+            
+        // FEATURE 7: Handle PUT request to update observations
+        } else if (method.equalsIgnoreCase("PUT")) {
+            if (path.equals("/datarecord") || path.equals("/datarecord/")) {
+                String query = exchange.getRequestURI().getQuery();
+                if (query != null && query.startsWith("id=")) {
+                    String idStr = query.replace("id=", "");
+                    
+                    ObservationRecord existingRecord = db.getMessageById(idStr);
+                    if (existingRecord == null) {
+                        sendResponse(exchange, 404, "Not Found: Observation ID does not exist");
+                        return;
+                    }
+                    
+                    // Verify the owner
+                    String username = exchange.getPrincipal().getUsername();
+                    String nickname = db.getUserNickname(username);
+                    String currentUser = (nickname != null && !nickname.isEmpty()) ? nickname : username;
+                    
+                    if (!existingRecord.getRecordOwner().equals(currentUser)) {
+                        sendResponse(exchange, 403, "Forbidden: You are not the owner of this record");
+                        return;
+                    }
+                    
+                    InputStream stream = exchange.getRequestBody();
+                    String text = new BufferedReader(new InputStreamReader(stream, StandardCharsets.UTF_8))
+                            .lines().collect(Collectors.joining("\n"));
+                    stream.close();
+                    
+                    try {
+                        JSONObject jsonMsg = new JSONObject(text);
+                        ObservationRecord updatedRecord = new ObservationRecord(jsonMsg);
+                        
+                        if (!updatedRecord.isValid()) {
+                            sendResponse(exchange, 400, "Invalid content in updated observation");
+                            return;
+                        }
+                        
+                        // Maintain the original core values
+                        updatedRecord.setId(existingRecord.getId());
+                        updatedRecord.setRecordTimeReceived(existingRecord.getRecordTimeReceived());
+                        updatedRecord.setRecordOwner(existingRecord.getRecordOwner());
+                        
+                        // Set Feature 7 specific fields
+                        if (updatedRecord.getUpdateReason() == null || updatedRecord.getUpdateReason().isEmpty()) {
+                            updatedRecord.setUpdateReason("N/A");
+                        }
+                        
+                        updatedRecord.setEdited(java.time.ZonedDateTime.now(java.time.ZoneOffset.UTC)
+                            .format(java.time.format.DateTimeFormatter.ofPattern("yyyy-MM-dd'T'HH:mm:ss.SSSX")));
+                            
+                        // Refresh weather data for the updated observatories
+                        JSONArray observatories = updatedRecord.getObservatory();
+                        if (observatories != null) {
+                            Map<String, JSONObject> weatherCache = new HashMap<>();
+                            for (int i = 0; i < observatories.length(); i++) {
+                                JSONObject obs = observatories.getJSONObject(i);
+                                if (obs.has("weather")) {
+                                    if (obs.has("latitude") && obs.has("longitude")) {
+                                        double lat = obs.getDouble("latitude");
+                                        double lon = obs.getDouble("longitude");
+                                        String cacheKey = lat + "," + lon;
+                                        JSONObject weather = weatherCache.containsKey(cacheKey) ? weatherCache.get(cacheKey) : getWeatherInfo(lat, lon);
+                                        
+                                        if (weather != null && weather.length() > 0) {
+                                            weatherCache.put(cacheKey, weather);
+                                            obs.put("weather", new JSONObject(weather.toString())); 
+                                        } else {
+                                            obs.put("weather", new JSONObject()); 
+                                        }
+                                    } else {
+                                        obs.put("weather", new JSONObject());
+                                    }
+                                }
+                            }
+                        }
+                        
+                        // Save changes to DB and memory
+                        db.updateMessage(updatedRecord);
+                        synchronized(messages) {
+                            for (int i = 0; i < messages.size(); i++) {
+                                if (messages.get(i).getId().equals(updatedRecord.getId())) {
+                                    messages.set(i, updatedRecord);
+                                    break;
+                                }
+                            }
+                        }
+                        
+                        // Return the updated object
+                        String responseString = updatedRecord.toJSON().toString();
+                        byte[] bytes = responseString.getBytes(StandardCharsets.UTF_8);
+                        exchange.getResponseHeaders().add("Content-Type", "application/json");
+                        exchange.sendResponseHeaders(200, bytes.length);
+                        try (OutputStream os = exchange.getResponseBody()) {
+                            os.write(bytes);
+                        }
+                        
+                    } catch (JSONException e) {
+                        sendResponse(exchange, 400, "Invalid JSON format or data type");
+                    }
+                } else {
+                    sendResponse(exchange, 400, "Missing ID parameter in URL query");
+                }
+            } else {
+                sendResponse(exchange, 404, "Not Found");
             }
         } else {
             exchange.sendResponseHeaders(405, -1);
