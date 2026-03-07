@@ -2,13 +2,18 @@ package com.o3.server;
 
 import com.sun.net.httpserver.*;
 import java.io.*;
+import java.net.HttpURLConnection;
 import java.net.InetSocketAddress;
+import java.net.URI;
+import java.net.URL;
 import java.nio.charset.StandardCharsets;
 import java.security.KeyStore;
 import javax.net.ssl.*;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.List;
+import java.util.Map;
+import java.util.HashMap;
 import java.util.concurrent.Executors;
 import java.util.stream.Collectors;
 
@@ -16,15 +21,6 @@ import org.json.JSONArray;
 import org.json.JSONException;
 import org.json.JSONObject;
 import java.util.UUID;
-
-// Weather imports
-import java.net.URI;
-import java.net.URL;
-import javax.xml.parsers.DocumentBuilder;
-import javax.xml.parsers.DocumentBuilderFactory;
-import org.w3c.dom.Document;
-import org.w3c.dom.Node;
-import org.w3c.dom.NodeList;
 
 public class Server implements HttpHandler {
     
@@ -87,21 +83,41 @@ public class Server implements HttpHandler {
                 }
                 
                 if (newRecord.isValid()) {
-                    // FEATURE 5 update: Weather Parsing
                     JSONArray observatories = newRecord.getObservatory();
                     if (observatories != null) {
+                        
+                        // FEATURE 5 FIX: Weather Cache
+                        Map<String, JSONObject> weatherCache = new HashMap<>();
+
                         for (int i = 0; i < observatories.length(); i++) {
                             JSONObject obs = observatories.getJSONObject(i);
                             
+                            // IF the observatory has coordinates, fetch the weather!
                             if (obs.has("latitude") && obs.has("longitude")) {
-                                JSONObject weather = getWeatherInfo(obs.getDouble("latitude"), obs.getDouble("longitude"));
-                                // Only attach if we successfully parsed data
+                                double lat = obs.getDouble("latitude");
+                                double lon = obs.getDouble("longitude");
+                                String cacheKey = lat + "," + lon;
+                                
+                                JSONObject weather = null;
+                                
+                                // Check cache first
+                                if (weatherCache.containsKey(cacheKey)) {
+                                    weather = weatherCache.get(cacheKey);
+                                } else {
+                                    weather = getWeatherInfo(lat, lon);
+                                    if (weather != null && weather.length() > 0) {
+                                        weatherCache.put(cacheKey, weather); // Save to cache
+                                    }
+                                }
+
+                                // Always attach the weather (either fetched data or an empty object)
                                 if (weather != null && weather.length() > 0) {
-                                    obs.put("weather", weather);
-                                } else if (!obs.has("weather")) {
+                                    obs.put("weather", new JSONObject(weather.toString())); 
+                                } else {
                                     obs.put("weather", new JSONObject()); 
                                 }
-                            } else if (!obs.has("weather")) {
+                            } else {
+                                // If no coordinates were provided, attach an empty weather object
                                 obs.put("weather", new JSONObject());
                             }
                         }
@@ -154,53 +170,53 @@ public class Server implements HttpHandler {
         }
     }
 
-    // XML PARSER FIX
+    // BULLETPROOF PARSER WITH PROPER CONNECTION CLEANUP
     private JSONObject getWeatherInfo(double latitude, double longitude) {
+        HttpURLConnection conn = null;
+        InputStream inputStream = null;
         try {
-            DocumentBuilderFactory factory = DocumentBuilderFactory.newInstance();
-            DocumentBuilder builder = factory.newDocumentBuilder();
             URI uri = new URI("http://127.0.0.1:4001/wfs?latlon=" + latitude + "," + longitude);
-            URL url = uri.toURL();
-            InputStream inputStream = url.openStream();
-            Document document = builder.parse(inputStream);
-            document.getDocumentElement().normalize();
+            conn = (HttpURLConnection) uri.toURL().openConnection();
+            conn.setRequestMethod("GET");
+            conn.setConnectTimeout(3000); 
+            conn.setReadTimeout(3000);
+            
+            inputStream = conn.getInputStream();
+            BufferedReader in = new BufferedReader(new InputStreamReader(inputStream, StandardCharsets.UTF_8));
+            String response = in.lines().collect(Collectors.joining("\n"));
             
             JSONObject weatherInfo = new JSONObject();
             
-            // Get all nodes to bypass namespace strictness
-            NodeList allNodes = document.getElementsByTagName("*");
-            String currentName = null;
+            // Regex parsing safely ignores XML namespace errors
+            java.util.regex.Matcher mName = java.util.regex.Pattern.compile("<[^>]*ParameterName[^>]*>([^<]+)</").matcher(response);
+            java.util.regex.Matcher mVal = java.util.regex.Pattern.compile("<[^>]*ParameterValue[^>]*>([^<]+)</").matcher(response);
             
-            for (int i = 0; i < allNodes.getLength(); i++) {
-                Node node = allNodes.item(i);
-                String nodeName = node.getNodeName();
-                
-                // Track the ParameterName
-                if (nodeName.endsWith("ParameterName")) {
-                    currentName = node.getTextContent().trim();
-                } 
-                // Once hit the ParameterValue, map it to the tracked Name
-                else if (nodeName.endsWith("ParameterValue") && currentName != null) {
-                    String valStr = node.getTextContent().trim();
-                    try {
-                        double val = Double.parseDouble(valStr);
-                        if (currentName.equalsIgnoreCase("temperatureInKelvins")) {
-                            weatherInfo.put("temperature_in_kelvins", val);
-                        } else if (currentName.equalsIgnoreCase("cloudinessPercentance") || currentName.equalsIgnoreCase("cloudinessPercentage")) {
-                            weatherInfo.put("cloudiness_percentage", val);
-                        } else if (currentName.equalsIgnoreCase("bagroundLightVolume") || currentName.equalsIgnoreCase("backgroundLightVolume")) {
-                            weatherInfo.put("background_light_volume", val);
-                        }
-                    } catch (NumberFormatException nfe) {
-                        // Ignore unparseable values
+            while (mName.find() && mVal.find()) {
+                String name = mName.group(1).trim();
+                String valStr = mVal.group(1).trim();
+                try {
+                    double val = Double.parseDouble(valStr);
+                    if (name.equalsIgnoreCase("temperatureInKelvins")) {
+                        weatherInfo.put("temperature_in_kelvins", val);
+                    } else if (name.equalsIgnoreCase("cloudinessPercentance") || name.equalsIgnoreCase("cloudinessPercentage")) {
+                        weatherInfo.put("cloudiness_percentage", val);
+                    } else if (name.equalsIgnoreCase("bagroundLightVolume") || name.equalsIgnoreCase("backgroundLightVolume")) {
+                        weatherInfo.put("background_light_volume", val);
                     }
-                    currentName = null; // Reset for the next pair
-                }
+                } catch (NumberFormatException ignored) {}
             }
             return weatherInfo;
+            
         } catch (Exception e) {
-            System.out.println("Weather fetch failed: " + e.getMessage());
             return null; 
+        } finally {
+            // CRITICAL: Prevent Connection Exhaustion by safely closing resources
+            if (inputStream != null) {
+                try { inputStream.close(); } catch (IOException ignored) {}
+            }
+            if (conn != null) {
+                conn.disconnect();
+            }
         }
     }
 
