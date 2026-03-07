@@ -20,7 +20,6 @@ import java.util.stream.Collectors;
 import org.json.JSONArray;
 import org.json.JSONException;
 import org.json.JSONObject;
-import java.util.UUID;
 
 // Weather imports
 import javax.xml.parsers.DocumentBuilder;
@@ -71,7 +70,10 @@ public class Server implements HttpHandler {
                 ObservationRecord newRecord = new ObservationRecord(jsonMsg);
                 
                 newRecord.setRecordTimeReceived(System.currentTimeMillis());
-                newRecord.setId(UUID.randomUUID().toString());
+                
+                // FEATURE 6 FIX: Generate an integer ID instead of a UUID String
+                int newId = java.util.concurrent.ThreadLocalRandom.current().nextInt(1, Integer.MAX_VALUE);
+                newRecord.setId(String.valueOf(newId));
                 
                 String ownerToSet = "unknown";
                 if (exchange.getPrincipal() != null) {
@@ -91,19 +93,30 @@ public class Server implements HttpHandler {
                 if (newRecord.isValid()) {
                     JSONArray observatories = newRecord.getObservatory();
                     if (observatories != null) {
+                        
                         Map<String, JSONObject> weatherCache = new HashMap<>();
 
                         for (int i = 0; i < observatories.length(); i++) {
                             JSONObject obs = observatories.getJSONObject(i);
+                            
                             if (obs.has("weather")) {
                                 if (obs.has("latitude") && obs.has("longitude")) {
                                     double lat = obs.getDouble("latitude");
                                     double lon = obs.getDouble("longitude");
                                     String cacheKey = lat + "," + lon;
-                                    JSONObject weather = weatherCache.containsKey(cacheKey) ? weatherCache.get(cacheKey) : getWeatherInfo(lat, lon);
                                     
+                                    JSONObject weather = null;
+                                    
+                                    if (weatherCache.containsKey(cacheKey)) {
+                                        weather = weatherCache.get(cacheKey);
+                                    } else {
+                                        weather = getWeatherInfo(lat, lon);
+                                        if (weather != null && weather.length() > 0) {
+                                            weatherCache.put(cacheKey, weather); 
+                                        }
+                                    }
+
                                     if (weather != null && weather.length() > 0) {
-                                        weatherCache.put(cacheKey, weather);
                                         obs.put("weather", new JSONObject(weather.toString())); 
                                     } else {
                                         obs.put("weather", new JSONObject()); 
@@ -123,8 +136,9 @@ public class Server implements HttpHandler {
                 }
 
             } catch (JSONException e) {
-                sendResponse(exchange, 400, "Invalid JSON format");
+                sendResponse(exchange, 400, "Invalid JSON format or data type");
             } catch (Exception e) {
+                e.printStackTrace();
                 sendResponse(exchange, 500, "Internal Server Error");
             }
 
@@ -139,7 +153,10 @@ public class Server implements HttpHandler {
                     responseArray.put(record.toJSON());
                 }
             }
-            byte[] bytes = responseArray.toString().getBytes(StandardCharsets.UTF_8);
+            
+            String responseString = responseArray.toString();
+            byte[] bytes = responseString.getBytes(StandardCharsets.UTF_8);
+            
             exchange.getResponseHeaders().add("Content-Type", "application/json");
             exchange.sendResponseHeaders(200, bytes.length);
             try (OutputStream os = exchange.getResponseBody()) {
@@ -162,7 +179,7 @@ public class Server implements HttpHandler {
         HttpURLConnection conn = null;
         InputStream inputStream = null;
         try {
-            String urlString = "http://127.0.0.1:4001/wfs?latlon=" + latitude + "," + longitude + "&parameters=Temperature,TotalCloudCover,RadiationGlobalAccumulation";
+            String urlString = String.format(java.util.Locale.US, "http://127.0.0.1:4001/wfs?latlon=%.6f,%.6f&parameters=Temperature,TotalCloudCover,RadiationGlobalAccumulation", latitude, longitude);
             URI uri = new URI(urlString);
             conn = (HttpURLConnection) uri.toURL().openConnection();
             conn.setRequestMethod("GET");
@@ -176,6 +193,7 @@ public class Server implements HttpHandler {
             Document document = builder.parse(inputStream);
             
             JSONObject weatherInfo = new JSONObject();
+            
             NodeList names = document.getElementsByTagNameNS("*", "ParameterName");
             NodeList values = document.getElementsByTagNameNS("*", "ParameterValue");
             
@@ -196,11 +214,16 @@ public class Server implements HttpHandler {
                 }
             }
             return weatherInfo;
+            
         } catch (Exception e) {
             return null; 
         } finally {
-            if (inputStream != null) try { inputStream.close(); } catch (IOException ignored) {}
-            if (conn != null) conn.disconnect();
+            if (inputStream != null) {
+                try { inputStream.close(); } catch (IOException ignored) {}
+            }
+            if (conn != null) {
+                conn.disconnect();
+            }
         }
     }
 
@@ -238,7 +261,7 @@ public class Server implements HttpHandler {
             HttpContext context = server.createContext("/datarecord", myServer); 
             context.setAuthenticator(authenticator);
 
-            // FEATURE 6: Attach the new Collections handler
+            // Collections Endpoint
             HttpContext collectionsContext = server.createContext("/collections", new CollectionsHandler(myServer.db));
             collectionsContext.setAuthenticator(authenticator);
 
