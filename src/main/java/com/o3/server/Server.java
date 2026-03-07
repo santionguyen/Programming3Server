@@ -92,13 +92,11 @@ public class Server implements HttpHandler {
                     JSONArray observatories = newRecord.getObservatory();
                     if (observatories != null) {
                         
-                        // FEATURE 5 FIX: Weather Cache
                         Map<String, JSONObject> weatherCache = new HashMap<>();
 
                         for (int i = 0; i < observatories.length(); i++) {
                             JSONObject obs = observatories.getJSONObject(i);
                             
-                            // IF the observatory has coordinates, fetch the weather!
                             if (obs.has("latitude") && obs.has("longitude")) {
                                 double lat = obs.getDouble("latitude");
                                 double lon = obs.getDouble("longitude");
@@ -106,24 +104,21 @@ public class Server implements HttpHandler {
                                 
                                 JSONObject weather = null;
                                 
-                                // Check cache first
                                 if (weatherCache.containsKey(cacheKey)) {
                                     weather = weatherCache.get(cacheKey);
                                 } else {
                                     weather = getWeatherInfo(lat, lon);
                                     if (weather != null && weather.length() > 0) {
-                                        weatherCache.put(cacheKey, weather); // Save to cache
+                                        weatherCache.put(cacheKey, weather); 
                                     }
                                 }
 
-                                // Always attach the weather (either fetched data or an empty object)
                                 if (weather != null && weather.length() > 0) {
                                     obs.put("weather", new JSONObject(weather.toString())); 
                                 } else {
                                     obs.put("weather", new JSONObject()); 
                                 }
                             } else {
-                                // If no coordinates were provided, attach an empty weather object
                                 obs.put("weather", new JSONObject());
                             }
                         }
@@ -176,12 +171,10 @@ public class Server implements HttpHandler {
         }
     }
 
-    // FRIEND'S LOGIC IMPLEMENTED HERE
     private JSONObject getWeatherInfo(double latitude, double longitude) {
         HttpURLConnection conn = null;
         InputStream inputStream = null;
         try {
-            // 1. ADDED the precise parameters to the URL request!
             String urlString = String.format(java.util.Locale.US, "http://127.0.0.1:4001/wfs?latlon=%.6f,%.6f&parameters=Temperature,TotalCloudCover,RadiationGlobalAccumulation", latitude, longitude);
             URI uri = new URI(urlString);
             conn = (HttpURLConnection) uri.toURL().openConnection();
@@ -197,7 +190,6 @@ public class Server implements HttpHandler {
             
             JSONObject weatherInfo = new JSONObject();
             
-            // 2. Used the exact node names and mapping from WeatherFetcher.java
             NodeList names = document.getElementsByTagName("BsWfs:ParameterName");
             NodeList values = document.getElementsByTagName("BsWfs:ParameterValue");
             
@@ -207,11 +199,11 @@ public class Server implements HttpHandler {
                 
                 switch (name) {
                     case "Temperature":
-                        // Convert Celsius to Kelvin as required by the JSON spec
                         weatherInfo.put("temperature_in_kelvins", Math.round((value + 273.15) * 100.0) / 100.0);
                         break;
                     case "TotalCloudCover":
-                        weatherInfo.put("cloudiness_percentage", value);
+                        // FINAL FIX: Cast cloudiness to Integer matching the test's rounding logic!
+                        weatherInfo.put("cloudiness_percentage", (int) Math.round(value));
                         break;
                     case "RadiationGlobalAccumulation":
                         weatherInfo.put("background_light_volume", value);
@@ -223,7 +215,6 @@ public class Server implements HttpHandler {
         } catch (Exception e) {
             return null; 
         } finally {
-            // Connection Cleanup to prevent exhaustion
             if (inputStream != null) {
                 try { inputStream.close(); } catch (IOException ignored) {}
             }
