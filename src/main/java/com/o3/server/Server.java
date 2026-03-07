@@ -91,32 +91,19 @@ public class Server implements HttpHandler {
                 if (newRecord.isValid()) {
                     JSONArray observatories = newRecord.getObservatory();
                     if (observatories != null) {
-                        
                         Map<String, JSONObject> weatherCache = new HashMap<>();
 
                         for (int i = 0; i < observatories.length(); i++) {
                             JSONObject obs = observatories.getJSONObject(i);
-                            
-                            // THE FINAL SECRET: Only fetch weather IF the client requested it!
                             if (obs.has("weather")) {
                                 if (obs.has("latitude") && obs.has("longitude")) {
                                     double lat = obs.getDouble("latitude");
                                     double lon = obs.getDouble("longitude");
                                     String cacheKey = lat + "," + lon;
+                                    JSONObject weather = weatherCache.containsKey(cacheKey) ? weatherCache.get(cacheKey) : getWeatherInfo(lat, lon);
                                     
-                                    JSONObject weather = null;
-                                    
-                                    if (weatherCache.containsKey(cacheKey)) {
-                                        weather = weatherCache.get(cacheKey);
-                                    } else {
-                                        weather = getWeatherInfo(lat, lon);
-                                        if (weather != null && weather.length() > 0) {
-                                            weatherCache.put(cacheKey, weather); 
-                                        }
-                                    }
-
                                     if (weather != null && weather.length() > 0) {
-                                        // Copy the object to prevent caching reference bugs
+                                        weatherCache.put(cacheKey, weather);
                                         obs.put("weather", new JSONObject(weather.toString())); 
                                     } else {
                                         obs.put("weather", new JSONObject()); 
@@ -125,7 +112,6 @@ public class Server implements HttpHandler {
                                     obs.put("weather", new JSONObject());
                                 }
                             }
-                            // If obs DOES NOT have "weather", we leave it alone!
                         }
                     }
 
@@ -137,9 +123,8 @@ public class Server implements HttpHandler {
                 }
 
             } catch (JSONException e) {
-                sendResponse(exchange, 400, "Invalid JSON format or data type");
+                sendResponse(exchange, 400, "Invalid JSON format");
             } catch (Exception e) {
-                e.printStackTrace();
                 sendResponse(exchange, 500, "Internal Server Error");
             }
 
@@ -154,10 +139,7 @@ public class Server implements HttpHandler {
                     responseArray.put(record.toJSON());
                 }
             }
-            
-            String responseString = responseArray.toString();
-            byte[] bytes = responseString.getBytes(StandardCharsets.UTF_8);
-            
+            byte[] bytes = responseArray.toString().getBytes(StandardCharsets.UTF_8);
             exchange.getResponseHeaders().add("Content-Type", "application/json");
             exchange.sendResponseHeaders(200, bytes.length);
             try (OutputStream os = exchange.getResponseBody()) {
@@ -189,13 +171,11 @@ public class Server implements HttpHandler {
             
             inputStream = conn.getInputStream();
             DocumentBuilderFactory factory = DocumentBuilderFactory.newInstance();
-            // Safely handle XML namespaces like your friend's code did!
             factory.setNamespaceAware(true); 
             DocumentBuilder builder = factory.newDocumentBuilder();
             Document document = builder.parse(inputStream);
             
             JSONObject weatherInfo = new JSONObject();
-            
             NodeList names = document.getElementsByTagNameNS("*", "ParameterName");
             NodeList values = document.getElementsByTagNameNS("*", "ParameterValue");
             
@@ -216,16 +196,11 @@ public class Server implements HttpHandler {
                 }
             }
             return weatherInfo;
-            
         } catch (Exception e) {
             return null; 
         } finally {
-            if (inputStream != null) {
-                try { inputStream.close(); } catch (IOException ignored) {}
-            }
-            if (conn != null) {
-                conn.disconnect();
-            }
+            if (inputStream != null) try { inputStream.close(); } catch (IOException ignored) {}
+            if (conn != null) conn.disconnect();
         }
     }
 
@@ -262,6 +237,10 @@ public class Server implements HttpHandler {
             server.createContext("/registration", new RegistrationHandler(authenticator));
             HttpContext context = server.createContext("/datarecord", myServer); 
             context.setAuthenticator(authenticator);
+
+            // FEATURE 6: Attach the new Collections handler
+            HttpContext collectionsContext = server.createContext("/collections", new CollectionsHandler(myServer.db));
+            collectionsContext.setAuthenticator(authenticator);
 
             server.setExecutor(Executors.newCachedThreadPool());
             server.start();
