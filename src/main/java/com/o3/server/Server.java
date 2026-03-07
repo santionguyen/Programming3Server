@@ -2,18 +2,13 @@ package com.o3.server;
 
 import com.sun.net.httpserver.*;
 import java.io.*;
-import java.net.HttpURLConnection;
 import java.net.InetSocketAddress;
-import java.net.URI;
-import java.net.URL;
 import java.nio.charset.StandardCharsets;
 import java.security.KeyStore;
 import javax.net.ssl.*;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.List;
-import java.util.Map;
-import java.util.HashMap;
 import java.util.concurrent.Executors;
 import java.util.stream.Collectors;
 
@@ -23,9 +18,12 @@ import org.json.JSONObject;
 import java.util.UUID;
 
 // Weather imports
+import java.net.URI;
+import java.net.URL;
 import javax.xml.parsers.DocumentBuilder;
 import javax.xml.parsers.DocumentBuilderFactory;
 import org.w3c.dom.Document;
+import org.w3c.dom.Node;
 import org.w3c.dom.NodeList;
 
 public class Server implements HttpHandler {
@@ -89,36 +87,21 @@ public class Server implements HttpHandler {
                 }
                 
                 if (newRecord.isValid()) {
+                    // FEATURE 5 update: Weather Parsing
                     JSONArray observatories = newRecord.getObservatory();
                     if (observatories != null) {
-                        
-                        Map<String, JSONObject> weatherCache = new HashMap<>();
-
                         for (int i = 0; i < observatories.length(); i++) {
                             JSONObject obs = observatories.getJSONObject(i);
                             
                             if (obs.has("latitude") && obs.has("longitude")) {
-                                double lat = obs.getDouble("latitude");
-                                double lon = obs.getDouble("longitude");
-                                String cacheKey = lat + "," + lon;
-                                
-                                JSONObject weather = null;
-                                
-                                if (weatherCache.containsKey(cacheKey)) {
-                                    weather = weatherCache.get(cacheKey);
-                                } else {
-                                    weather = getWeatherInfo(lat, lon);
-                                    if (weather != null && weather.length() > 0) {
-                                        weatherCache.put(cacheKey, weather);
-                                    }
-                                }
-
+                                JSONObject weather = getWeatherInfo(obs.getDouble("latitude"), obs.getDouble("longitude"));
+                                // Only attach if we successfully parsed data
                                 if (weather != null && weather.length() > 0) {
-                                    obs.put("weather", new JSONObject(weather.toString())); 
-                                } else {
+                                    obs.put("weather", weather);
+                                } else if (!obs.has("weather")) {
                                     obs.put("weather", new JSONObject()); 
                                 }
-                            } else {
+                            } else if (!obs.has("weather")) {
                                 obs.put("weather", new JSONObject());
                             }
                         }
@@ -171,34 +154,36 @@ public class Server implements HttpHandler {
         }
     }
 
-    // BULLETPROOF PARSER: Scans all elements ignoring namespaces
+    // XML PARSER FIX
     private JSONObject getWeatherInfo(double latitude, double longitude) {
         try {
-            URI uri = new URI("http://127.0.0.1:4001/wfs?latlon=" + latitude + "," + longitude);
-            URL url = uri.toURL();
-            HttpURLConnection conn = (HttpURLConnection) url.openConnection();
-            conn.setRequestMethod("GET");
-            conn.setConnectTimeout(3000); 
-            conn.setReadTimeout(3000);
-            
-            InputStream inputStream = conn.getInputStream();
             DocumentBuilderFactory factory = DocumentBuilderFactory.newInstance();
             DocumentBuilder builder = factory.newDocumentBuilder();
+            URI uri = new URI("http://127.0.0.1:4001/wfs?latlon=" + latitude + "," + longitude);
+            URL url = uri.toURL();
+            InputStream inputStream = url.openStream();
             Document document = builder.parse(inputStream);
             document.getDocumentElement().normalize();
             
             JSONObject weatherInfo = new JSONObject();
-            NodeList allNodes = document.getElementsByTagName("*"); // Get every single tag
+            
+            // Get all nodes to bypass namespace strictness
+            NodeList allNodes = document.getElementsByTagName("*");
             String currentName = null;
             
             for (int i = 0; i < allNodes.getLength(); i++) {
-                String nodeName = allNodes.item(i).getNodeName();
+                Node node = allNodes.item(i);
+                String nodeName = node.getNodeName();
                 
+                // Track the ParameterName
                 if (nodeName.endsWith("ParameterName")) {
-                    currentName = allNodes.item(i).getTextContent().trim();
-                } else if (nodeName.endsWith("ParameterValue") && currentName != null) {
+                    currentName = node.getTextContent().trim();
+                } 
+                // Once hit the ParameterValue, map it to the tracked Name
+                else if (nodeName.endsWith("ParameterValue") && currentName != null) {
+                    String valStr = node.getTextContent().trim();
                     try {
-                        double val = Double.parseDouble(allNodes.item(i).getTextContent().trim());
+                        double val = Double.parseDouble(valStr);
                         if (currentName.equalsIgnoreCase("temperatureInKelvins")) {
                             weatherInfo.put("temperature_in_kelvins", val);
                         } else if (currentName.equalsIgnoreCase("cloudinessPercentance") || currentName.equalsIgnoreCase("cloudinessPercentage")) {
@@ -206,16 +191,15 @@ public class Server implements HttpHandler {
                         } else if (currentName.equalsIgnoreCase("bagroundLightVolume") || currentName.equalsIgnoreCase("backgroundLightVolume")) {
                             weatherInfo.put("background_light_volume", val);
                         }
-                    } catch (NumberFormatException ignored) {}
+                    } catch (NumberFormatException nfe) {
+                        // Ignore unparseable values
+                    }
                     currentName = null; // Reset for the next pair
                 }
             }
-            
-            inputStream.close();
-            conn.disconnect();
-            
             return weatherInfo;
         } catch (Exception e) {
+            System.out.println("Weather fetch failed: " + e.getMessage());
             return null; 
         }
     }
