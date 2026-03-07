@@ -22,6 +22,12 @@ import org.json.JSONException;
 import org.json.JSONObject;
 import java.util.UUID;
 
+// Weather imports
+import javax.xml.parsers.DocumentBuilder;
+import javax.xml.parsers.DocumentBuilderFactory;
+import org.w3c.dom.Document;
+import org.w3c.dom.NodeList;
+
 public class Server implements HttpHandler {
     
     public List<ObservationRecord> messages = Collections.synchronizedList(new ArrayList<>());
@@ -170,47 +176,54 @@ public class Server implements HttpHandler {
         }
     }
 
-    // BULLETPROOF PARSER WITH PROPER CONNECTION CLEANUP
+    // FRIEND'S LOGIC IMPLEMENTED HERE
     private JSONObject getWeatherInfo(double latitude, double longitude) {
         HttpURLConnection conn = null;
         InputStream inputStream = null;
         try {
-            URI uri = new URI("http://127.0.0.1:4001/wfs?latlon=" + latitude + "," + longitude);
+            // 1. ADDED the precise parameters to the URL request!
+            String urlString = String.format(java.util.Locale.US, "http://127.0.0.1:4001/wfs?latlon=%.6f,%.6f&parameters=Temperature,TotalCloudCover,RadiationGlobalAccumulation", latitude, longitude);
+            URI uri = new URI(urlString);
             conn = (HttpURLConnection) uri.toURL().openConnection();
             conn.setRequestMethod("GET");
-            conn.setConnectTimeout(3000); 
-            conn.setReadTimeout(3000);
+            conn.setConnectTimeout(5000); 
+            conn.setReadTimeout(5000);
             
             inputStream = conn.getInputStream();
-            BufferedReader in = new BufferedReader(new InputStreamReader(inputStream, StandardCharsets.UTF_8));
-            String response = in.lines().collect(Collectors.joining("\n"));
+            DocumentBuilderFactory factory = DocumentBuilderFactory.newInstance();
+            DocumentBuilder builder = factory.newDocumentBuilder();
+            Document document = builder.parse(inputStream);
+            document.getDocumentElement().normalize();
             
             JSONObject weatherInfo = new JSONObject();
             
-            // Regex parsing safely ignores XML namespace errors
-            java.util.regex.Matcher mName = java.util.regex.Pattern.compile("<[^>]*ParameterName[^>]*>([^<]+)</").matcher(response);
-            java.util.regex.Matcher mVal = java.util.regex.Pattern.compile("<[^>]*ParameterValue[^>]*>([^<]+)</").matcher(response);
+            // 2. Used the exact node names and mapping from WeatherFetcher.java
+            NodeList names = document.getElementsByTagName("BsWfs:ParameterName");
+            NodeList values = document.getElementsByTagName("BsWfs:ParameterValue");
             
-            while (mName.find() && mVal.find()) {
-                String name = mName.group(1).trim();
-                String valStr = mVal.group(1).trim();
-                try {
-                    double val = Double.parseDouble(valStr);
-                    if (name.equalsIgnoreCase("temperatureInKelvins")) {
-                        weatherInfo.put("temperature_in_kelvins", val);
-                    } else if (name.equalsIgnoreCase("cloudinessPercentance") || name.equalsIgnoreCase("cloudinessPercentage")) {
-                        weatherInfo.put("cloudiness_percentage", val);
-                    } else if (name.equalsIgnoreCase("bagroundLightVolume") || name.equalsIgnoreCase("backgroundLightVolume")) {
-                        weatherInfo.put("background_light_volume", val);
-                    }
-                } catch (NumberFormatException ignored) {}
+            for (int i = 0; i < names.getLength(); i++) {
+                String name = names.item(i).getTextContent().trim();
+                double value = Double.parseDouble(values.item(i).getTextContent().trim());
+                
+                switch (name) {
+                    case "Temperature":
+                        // Convert Celsius to Kelvin as required by the JSON spec
+                        weatherInfo.put("temperature_in_kelvins", Math.round((value + 273.15) * 100.0) / 100.0);
+                        break;
+                    case "TotalCloudCover":
+                        weatherInfo.put("cloudiness_percentage", value);
+                        break;
+                    case "RadiationGlobalAccumulation":
+                        weatherInfo.put("background_light_volume", value);
+                        break;
+                }
             }
             return weatherInfo;
             
         } catch (Exception e) {
             return null; 
         } finally {
-            // CRITICAL: Prevent Connection Exhaustion by safely closing resources
+            // Connection Cleanup to prevent exhaustion
             if (inputStream != null) {
                 try { inputStream.close(); } catch (IOException ignored) {}
             }
