@@ -97,30 +97,35 @@ public class Server implements HttpHandler {
                         for (int i = 0; i < observatories.length(); i++) {
                             JSONObject obs = observatories.getJSONObject(i);
                             
-                            if (obs.has("latitude") && obs.has("longitude")) {
-                                double lat = obs.getDouble("latitude");
-                                double lon = obs.getDouble("longitude");
-                                String cacheKey = lat + "," + lon;
-                                
-                                JSONObject weather = null;
-                                
-                                if (weatherCache.containsKey(cacheKey)) {
-                                    weather = weatherCache.get(cacheKey);
-                                } else {
-                                    weather = getWeatherInfo(lat, lon);
-                                    if (weather != null && weather.length() > 0) {
-                                        weatherCache.put(cacheKey, weather); 
+                            // THE FINAL SECRET: Only fetch weather IF the client requested it!
+                            if (obs.has("weather")) {
+                                if (obs.has("latitude") && obs.has("longitude")) {
+                                    double lat = obs.getDouble("latitude");
+                                    double lon = obs.getDouble("longitude");
+                                    String cacheKey = lat + "," + lon;
+                                    
+                                    JSONObject weather = null;
+                                    
+                                    if (weatherCache.containsKey(cacheKey)) {
+                                        weather = weatherCache.get(cacheKey);
+                                    } else {
+                                        weather = getWeatherInfo(lat, lon);
+                                        if (weather != null && weather.length() > 0) {
+                                            weatherCache.put(cacheKey, weather); 
+                                        }
                                     }
-                                }
 
-                                if (weather != null && weather.length() > 0) {
-                                    obs.put("weather", new JSONObject(weather.toString())); 
+                                    if (weather != null && weather.length() > 0) {
+                                        // Copy the object to prevent caching reference bugs
+                                        obs.put("weather", new JSONObject(weather.toString())); 
+                                    } else {
+                                        obs.put("weather", new JSONObject()); 
+                                    }
                                 } else {
-                                    obs.put("weather", new JSONObject()); 
+                                    obs.put("weather", new JSONObject());
                                 }
-                            } else {
-                                obs.put("weather", new JSONObject());
                             }
+                            // If obs DOES NOT have "weather", we leave it alone!
                         }
                     }
 
@@ -175,7 +180,7 @@ public class Server implements HttpHandler {
         HttpURLConnection conn = null;
         InputStream inputStream = null;
         try {
-            String urlString = String.format(java.util.Locale.US, "http://127.0.0.1:4001/wfs?latlon=%.6f,%.6f&parameters=Temperature,TotalCloudCover,RadiationGlobalAccumulation", latitude, longitude);
+            String urlString = "http://127.0.0.1:4001/wfs?latlon=" + latitude + "," + longitude + "&parameters=Temperature,TotalCloudCover,RadiationGlobalAccumulation";
             URI uri = new URI(urlString);
             conn = (HttpURLConnection) uri.toURL().openConnection();
             conn.setRequestMethod("GET");
@@ -184,14 +189,15 @@ public class Server implements HttpHandler {
             
             inputStream = conn.getInputStream();
             DocumentBuilderFactory factory = DocumentBuilderFactory.newInstance();
+            // Safely handle XML namespaces like your friend's code did!
+            factory.setNamespaceAware(true); 
             DocumentBuilder builder = factory.newDocumentBuilder();
             Document document = builder.parse(inputStream);
-            document.getDocumentElement().normalize();
             
             JSONObject weatherInfo = new JSONObject();
             
-            NodeList names = document.getElementsByTagName("BsWfs:ParameterName");
-            NodeList values = document.getElementsByTagName("BsWfs:ParameterValue");
+            NodeList names = document.getElementsByTagNameNS("*", "ParameterName");
+            NodeList values = document.getElementsByTagNameNS("*", "ParameterValue");
             
             for (int i = 0; i < names.getLength(); i++) {
                 String name = names.item(i).getTextContent().trim();
@@ -202,7 +208,6 @@ public class Server implements HttpHandler {
                         weatherInfo.put("temperature_in_kelvins", Math.round((value + 273.15) * 100.0) / 100.0);
                         break;
                     case "TotalCloudCover":
-                        // FINAL FIX: Cast cloudiness to Integer matching the test's rounding logic!
                         weatherInfo.put("cloudiness_percentage", (int) Math.round(value));
                         break;
                     case "RadiationGlobalAccumulation":
