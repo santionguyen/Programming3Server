@@ -1,5 +1,8 @@
 package com.o3.server;
 
+// Data model representing a registered user
+// Maps directly to the users data table in the database.
+
 public class User {
     private String username;
     private String password;

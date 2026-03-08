@@ -7,6 +7,10 @@ import java.util.stream.Collectors;
 import org.json.JSONObject;
 import org.json.JSONException;
 
+
+// **FEATURE 3: User registration
+// Handle POST request to /registration to create new user accounts
+
 public class RegistrationHandler implements HttpHandler{
     private UserAuthenticator auth;
     public RegistrationHandler(UserAuthenticator auth) {
@@ -15,6 +19,7 @@ public class RegistrationHandler implements HttpHandler{
     @Override
     public void handle(HttpExchange exchange ) throws IOException{
         if (exchange.getRequestMethod().equalsIgnoreCase("POST")){
+            // Read incoming JSON body 
             InputStream stream = exchange.getRequestBody();
             String text = new BufferedReader(new InputStreamReader(stream, StandardCharsets.UTF_8))
                     .lines().collect(Collectors.joining("\n"));
@@ -28,6 +33,8 @@ public class RegistrationHandler implements HttpHandler{
                 String nickname = jsonUser.getString("nickname");
                 
                 User newUser = new User(username, password, email, nickname);
+
+                // Attempt to register new user in the database
                 if (auth.addUser(newUser)){
                     sendResponse(exchange, 200, "User registered!");
                 } else{
@@ -37,7 +44,7 @@ public class RegistrationHandler implements HttpHandler{
                 sendResponse(exchange, 400, "Invalid JSON: " + e.getMessage());
             }
         } else {
-            sendResponse(exchange, 405, "Not supported!");
+            sendResponse(exchange, 405, "Not supported!"); // only Post is allowed 
         }
     }
 

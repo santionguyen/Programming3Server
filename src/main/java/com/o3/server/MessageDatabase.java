@@ -5,23 +5,26 @@ import java.util.List;
 import org.json.JSONArray;
 import org.json.JSONObject;
 
+// Thread-safe SQLite Database handler.
+//Implements synchronized methods to handle concurrent requests (Feature 4).
+
 public class MessageDatabase {
     private Connection connection;
 
     public synchronized void open(String dbName){
-        try{
+        try {
             String url = "jdbc:sqlite:" + dbName;
             this.connection = DriverManager.getConnection(url);
-        }catch(SQLException e){
+        } catch(SQLException e) {
             System.out.println("Connection failed " + e.getMessage());
         }
     }
     
     public synchronized void createTable(){
-        try{
+        try {
             Statement statement = connection.createStatement();
             
-            // Expanded with update_reason and edited for Feature 7
+            // Base table expanded with update_reason and edited for Feature 7
             String sql = "CREATE TABLE IF NOT EXISTS messages (" +
                          "id TEXT PRIMARY KEY, " +
                          "record_time_received INTEGER, " + 
@@ -45,7 +48,7 @@ public class MessageDatabase {
                               "nickname TEXT)";
             statement.execute(sqlUsers);
 
-            // Feature 6 Tables
+            // FEATURE 6: Tables for managing grouped collections
             String sqlCollections = "CREATE TABLE IF NOT EXISTS collections (id INTEGER PRIMARY KEY AUTOINCREMENT)";
             statement.execute(sqlCollections);
 
@@ -54,12 +57,12 @@ public class MessageDatabase {
                                            "message_id TEXT)";
             statement.execute(sqlCollectionMessages);
 
-            // FEATURE 7 FIX: Safely add columns if the old table already exists
+            // FEATURE 7: Safely add new columns to existing schema if necessary
             try { statement.execute("ALTER TABLE messages ADD COLUMN update_reason TEXT"); } catch (Exception e) {}
             try { statement.execute("ALTER TABLE messages ADD COLUMN edited TEXT"); } catch (Exception e) {}
 
             statement.close();
-        } catch(SQLException e){
+        } catch(SQLException e) {
             System.out.println("Create table error: " + e.getMessage());
         }
     }
@@ -68,7 +71,7 @@ public class MessageDatabase {
         String sql = "INSERT INTO messages (id, record_time_received, record_owner, " + 
                      "target_body_name, center_body_name, epoch, orbital_elements, state_vector, record_payload, observatory, update_reason, edited) " + 
                      "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)";
-        try{
+        try {
             PreparedStatement pstmt = connection.prepareStatement(sql);
             pstmt.setString(1, record.getId());
             pstmt.setLong(2, record.getRecordTimeReceived());
@@ -85,12 +88,12 @@ public class MessageDatabase {
 
             pstmt.executeUpdate();
             pstmt.close();
-        }catch(SQLException e){
+        } catch(SQLException e) {
             System.out.println("Add message error: " + e.getMessage());
         }
     }
     
-    // FEATURE 7: Update an existing message
+   // FEATURE 7: Update an existing message by overwriting old data
     public synchronized void updateMessage(ObservationRecord record) {
         String sql = "UPDATE messages SET target_body_name=?, center_body_name=?, epoch=?, orbital_elements=?, state_vector=?, record_payload=?, observatory=?, update_reason=?, edited=? WHERE id=?";
         try {
@@ -113,7 +116,8 @@ public class MessageDatabase {
         }
     }
 
-    // FEATURE 7: Fetch a single message by its ID
+    
+    //FEATURE 7: Fetch a single message by ID to verify ownership before update
     public synchronized ObservationRecord getMessageById(String id) {
         String sql = "SELECT * FROM messages WHERE id = ?";
         try {
@@ -121,33 +125,7 @@ public class MessageDatabase {
             pstmt.setString(1, id);
             ResultSet rs = pstmt.executeQuery();
             if (rs.next()) {
-                JSONObject json = new JSONObject();
-                json.put("target_body_name", rs.getString("target_body_name"));
-                json.put("center_body_name", rs.getString("center_body_name"));
-                json.put("epoch", rs.getString("epoch"));
-
-                String orbitalStr = rs.getString("orbital_elements");
-                if (orbitalStr != null) json.put("orbital_elements", new JSONObject(orbitalStr));
-                
-                String vectorStr = rs.getString("state_vector");
-                if (vectorStr != null) json.put("state_vector", new JSONObject(vectorStr));
-
-                ObservationRecord record = new ObservationRecord(json);
-                record.setId(rs.getString("id"));
-                record.setRecordTimeReceived(rs.getLong("record_time_received"));
-                record.setRecordOwner(rs.getString("record_owner"));
-                record.setRecordPayload(rs.getString("record_payload"));
-                record.setUpdateReason(rs.getString("update_reason"));
-                record.setEdited(rs.getString("edited"));
-                
-                String obsStr = rs.getString("observatory");
-                if (obsStr != null) {
-                    record.setObservatory(new JSONArray(obsStr));
-                }
-                
-                rs.close();
-                pstmt.close();
-                return record;
+                return parseRecordFromResult(rs);
             }
         } catch (Exception e) {
             System.out.println("Get message error: " + e.getMessage());
@@ -162,31 +140,7 @@ public class MessageDatabase {
             Statement statement = connection.createStatement();
             ResultSet rs = statement.executeQuery(sql);
             while (rs.next()) {
-                JSONObject json = new JSONObject();
-                json.put("target_body_name", rs.getString("target_body_name"));
-                json.put("center_body_name", rs.getString("center_body_name"));
-                json.put("epoch", rs.getString("epoch"));
-
-                String orbitalStr = rs.getString("orbital_elements");
-                if (orbitalStr != null) json.put("orbital_elements", new JSONObject(orbitalStr));
-                
-                String vectorStr = rs.getString("state_vector");
-                if (vectorStr != null) json.put("state_vector", new JSONObject(vectorStr));
-
-                ObservationRecord record = new ObservationRecord(json);
-                record.setId(rs.getString("id"));
-                record.setRecordTimeReceived(rs.getLong("record_time_received"));
-                record.setRecordOwner(rs.getString("record_owner"));
-                record.setRecordPayload(rs.getString("record_payload"));
-                record.setUpdateReason(rs.getString("update_reason"));
-                record.setEdited(rs.getString("edited"));
-                
-                String obsStr = rs.getString("observatory");
-                if (obsStr != null) {
-                    record.setObservatory(new org.json.JSONArray(obsStr));
-                }
-
-                loadedMessages.add(record);
+                loadedMessages.add(parseRecordFromResult(rs));
             }
             rs.close(); statement.close();
         } catch (Exception e) {
@@ -195,15 +149,41 @@ public class MessageDatabase {
         return loadedMessages;
     }
 
+    // Helper method to convert SQL rows back into ObservationRecord objects
+    private ObservationRecord parseRecordFromResult(ResultSet rs) throws Exception {
+        JSONObject json = new JSONObject();
+        json.put("target_body_name", rs.getString("target_body_name"));
+        json.put("center_body_name", rs.getString("center_body_name"));
+        json.put("epoch", rs.getString("epoch"));
+
+        String orbitalStr = rs.getString("orbital_elements");
+        if (orbitalStr != null) json.put("orbital_elements", new JSONObject(orbitalStr));
+        
+        String vectorStr = rs.getString("state_vector");
+        if (vectorStr != null) json.put("state_vector", new JSONObject(vectorStr));
+
+        ObservationRecord record = new ObservationRecord(json);
+        record.setId(rs.getString("id"));
+        record.setRecordTimeReceived(rs.getLong("record_time_received"));
+        record.setRecordOwner(rs.getString("record_owner"));
+        record.setRecordPayload(rs.getString("record_payload"));
+        record.setUpdateReason(rs.getString("update_reason"));
+        record.setEdited(rs.getString("edited"));
+        
+        String obsStr = rs.getString("observatory");
+        if (obsStr != null) {
+            record.setObservatory(new JSONArray(obsStr));
+        }
+        return record;
+    }
+
     public synchronized String getUserNickname(String username) {
         String sql = "SELECT nickname FROM users WHERE username = ?";
         try {
             PreparedStatement pstmt = connection.prepareStatement(sql);
             pstmt.setString(1, username);
             ResultSet rs = pstmt.executeQuery();
-            if (rs.next()) {
-                return rs.getString("nickname");
-            }
+            if (rs.next()) return rs.getString("nickname");
         } catch (SQLException e) {
             e.printStackTrace();
         }
@@ -230,13 +210,13 @@ public class MessageDatabase {
             PreparedStatement pstmt = connection.prepareStatement(sql);
             pstmt.setString(1, username);
             ResultSet rs = pstmt.executeQuery();
-            if (rs.next()) {
-                String dbPassword = rs.getString("password");
-                return dbPassword.equals(password);
-            }
+            if (rs.next()) return rs.getString("password").equals(password);
             return false;
         } catch (SQLException e) { return false; }
     }
+
+
+    // FEATURE 6: Creates a new collection and binds provided messages
 
     public synchronized int createCollection(JSONArray messageIds) {
         String sql = "INSERT INTO collections (id) VALUES (null)";
@@ -280,9 +260,7 @@ public class MessageDatabase {
         try {
             Statement stmt = connection.createStatement();
             ResultSet rs = stmt.executeQuery(sql);
-            while (rs.next()) {
-                ids.add(rs.getInt("id"));
-            }
+            while (rs.next()) ids.add(rs.getInt("id"));
         } catch (SQLException e) { e.printStackTrace(); }
         return ids;
     }
@@ -298,37 +276,14 @@ public class MessageDatabase {
 
     public synchronized List<ObservationRecord> getMessagesInCollection(int collectionId) {
         List<ObservationRecord> loadedMessages = new ArrayList<>();
+        // JOIN statement bridges records to their associated collection group
         String sql = "SELECT m.* FROM messages m JOIN collection_messages cm ON m.id = cm.message_id WHERE cm.collection_id = ?";
         try {
             PreparedStatement pstmt = connection.prepareStatement(sql);
             pstmt.setInt(1, collectionId);
             ResultSet rs = pstmt.executeQuery();
             while (rs.next()) {
-                JSONObject json = new JSONObject();
-                json.put("target_body_name", rs.getString("target_body_name"));
-                json.put("center_body_name", rs.getString("center_body_name"));
-                json.put("epoch", rs.getString("epoch"));
-
-                String orbitalStr = rs.getString("orbital_elements");
-                if (orbitalStr != null) json.put("orbital_elements", new JSONObject(orbitalStr));
-                
-                String vectorStr = rs.getString("state_vector");
-                if (vectorStr != null) json.put("state_vector", new JSONObject(vectorStr));
-
-                ObservationRecord record = new ObservationRecord(json);
-                record.setId(rs.getString("id"));
-                record.setRecordTimeReceived(rs.getLong("record_time_received"));
-                record.setRecordOwner(rs.getString("record_owner"));
-                record.setRecordPayload(rs.getString("record_payload"));
-                record.setUpdateReason(rs.getString("update_reason"));
-                record.setEdited(rs.getString("edited"));
-                
-                String obsStr = rs.getString("observatory");
-                if (obsStr != null) {
-                    record.setObservatory(new JSONArray(obsStr));
-                }
-
-                loadedMessages.add(record);
+                loadedMessages.add(parseRecordFromResult(rs));
             }
             rs.close(); pstmt.close();
         } catch (Exception e) {

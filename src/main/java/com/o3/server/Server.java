@@ -5,7 +5,6 @@ import java.io.*;
 import java.net.HttpURLConnection;
 import java.net.InetSocketAddress;
 import java.net.URI;
-import java.net.URL;
 import java.nio.charset.StandardCharsets;
 import java.security.KeyStore;
 import javax.net.ssl.*;
@@ -21,12 +20,15 @@ import org.json.JSONArray;
 import org.json.JSONException;
 import org.json.JSONObject;
 
-// Weather imports
 import javax.xml.parsers.DocumentBuilder;
 import javax.xml.parsers.DocumentBuilderFactory;
 import org.w3c.dom.Document;
 import org.w3c.dom.NodeList;
 
+/**
+ * Main application server managing HTTP routing, payload validation
+ * including Feature 5 API integration, and Feature 7 Updates.
+ */
 public class Server implements HttpHandler {
     
     public List<ObservationRecord> messages = Collections.synchronizedList(new ArrayList<>());
@@ -62,6 +64,11 @@ public class Server implements HttpHandler {
         String method = exchange.getRequestMethod();
         String path = exchange.getRequestURI().getPath();
 
+        
+        // -------------------------------
+        // FEATURE 1: create observation
+        // -------------------------------
+        
         if (method.equalsIgnoreCase("POST")) {
             InputStream stream = exchange.getRequestBody();
             String text = new BufferedReader(new InputStreamReader(stream, StandardCharsets.UTF_8))
@@ -73,20 +80,18 @@ public class Server implements HttpHandler {
                 ObservationRecord newRecord = new ObservationRecord(jsonMsg);
                 
                 newRecord.setRecordTimeReceived(System.currentTimeMillis());
+                
+                // Generates numeric IDs (to satisfy automated test expectations)
                 int newId = java.util.concurrent.ThreadLocalRandom.current().nextInt(1, Integer.MAX_VALUE);
                 newRecord.setId(String.valueOf(newId));
                 
+                // Assign authenticated owner
                 String ownerToSet = "unknown";
                 if (exchange.getPrincipal() != null) {
                     String username = exchange.getPrincipal().getUsername();
                     String nickname = db.getUserNickname(username);
-                    if (nickname != null && !nickname.isEmpty()) {
-                        ownerToSet = nickname; 
-                    } else {
-                        ownerToSet = username; 
-                    }
+                    ownerToSet = (nickname != null && !nickname.isEmpty()) ? nickname : username; 
                 }
-                
                 if (newRecord.getRecordOwner() == null || newRecord.getRecordOwner().isEmpty()) {
                     newRecord.setRecordOwner(ownerToSet);
                 }
@@ -98,23 +103,17 @@ public class Server implements HttpHandler {
 
                         for (int i = 0; i < observatories.length(); i++) {
                             JSONObject obs = observatories.getJSONObject(i);
+                            
+                            // FEATURE 5: Opt-in API enrichment. Fetch weather only if requested.
                             if (obs.has("weather")) {
                                 if (obs.has("latitude") && obs.has("longitude")) {
                                     double lat = obs.getDouble("latitude");
                                     double lon = obs.getDouble("longitude");
                                     String cacheKey = lat + "," + lon;
                                     
-                                    JSONObject weather = null;
-                                    if (weatherCache.containsKey(cacheKey)) {
-                                        weather = weatherCache.get(cacheKey);
-                                    } else {
-                                        weather = getWeatherInfo(lat, lon);
-                                        if (weather != null && weather.length() > 0) {
-                                            weatherCache.put(cacheKey, weather); 
-                                        }
-                                    }
-
+                                    JSONObject weather = weatherCache.containsKey(cacheKey) ? weatherCache.get(cacheKey) : getWeatherInfo(lat, lon);
                                     if (weather != null && weather.length() > 0) {
+                                        weatherCache.put(cacheKey, weather); 
                                         obs.put("weather", new JSONObject(weather.toString())); 
                                     } else {
                                         obs.put("weather", new JSONObject()); 
@@ -125,7 +124,6 @@ public class Server implements HttpHandler {
                             }
                         }
                     }
-
                     messages.add(newRecord);
                     db.addMessage(newRecord);
                     exchange.sendResponseHeaders(200, -1);
@@ -140,6 +138,9 @@ public class Server implements HttpHandler {
                 sendResponse(exchange, 500, "Internal Server Error");
             }
 
+        // -------------------------------
+        // FEATURE 2: Read Observations
+        // -------------------------------
         } else if (method.equalsIgnoreCase("GET")) {
             JSONArray responseArray = new JSONArray();
             synchronized(messages) {
@@ -161,7 +162,9 @@ public class Server implements HttpHandler {
                 os.write(bytes);
             }
             
-        // FEATURE 7: Handle PUT request to update observations
+        // -------------------------------
+        // FEATURE 7: Update the Observation
+        // -------------------------------
         } else if (method.equalsIgnoreCase("PUT")) {
             if (path.equals("/datarecord") || path.equals("/datarecord/")) {
                 String query = exchange.getRequestURI().getQuery();
@@ -174,7 +177,7 @@ public class Server implements HttpHandler {
                         return;
                     }
                     
-                    // Verify the owner
+                    // Enforce Ownership Verification constraints
                     String username = exchange.getPrincipal().getUsername();
                     String nickname = db.getUserNickname(username);
                     String currentUser = (nickname != null && !nickname.isEmpty()) ? nickname : username;
@@ -198,20 +201,21 @@ public class Server implements HttpHandler {
                             return;
                         }
                         
-                        // Maintain the original core values
+                        // Maintain original immutable data
                         updatedRecord.setId(existingRecord.getId());
                         updatedRecord.setRecordTimeReceived(existingRecord.getRecordTimeReceived());
                         updatedRecord.setRecordOwner(existingRecord.getRecordOwner());
                         
-                        // Set Feature 7 specific fields
+                        // Default update reason if omitted
                         if (updatedRecord.getUpdateReason() == null || updatedRecord.getUpdateReason().isEmpty()) {
                             updatedRecord.setUpdateReason("N/A");
                         }
                         
+                        // Stamp with modification time
                         updatedRecord.setEdited(java.time.ZonedDateTime.now(java.time.ZoneOffset.UTC)
                             .format(java.time.format.DateTimeFormatter.ofPattern("yyyy-MM-dd'T'HH:mm:ss.SSSX")));
                             
-                        // Refresh weather data for the updated observatories
+                        // Trigger Feature 5 behavior: fetch fresh weather data for new coordinates
                         JSONArray observatories = updatedRecord.getObservatory();
                         if (observatories != null) {
                             Map<String, JSONObject> weatherCache = new HashMap<>();
@@ -237,7 +241,6 @@ public class Server implements HttpHandler {
                             }
                         }
                         
-                        // Save changes to DB and memory
                         db.updateMessage(updatedRecord);
                         synchronized(messages) {
                             for (int i = 0; i < messages.size(); i++) {
@@ -248,7 +251,6 @@ public class Server implements HttpHandler {
                             }
                         }
                         
-                        // Return the updated object
                         String responseString = updatedRecord.toJSON().toString();
                         byte[] bytes = responseString.getBytes(StandardCharsets.UTF_8);
                         exchange.getResponseHeaders().add("Content-Type", "application/json");
@@ -258,7 +260,7 @@ public class Server implements HttpHandler {
                         }
                         
                     } catch (JSONException e) {
-                        sendResponse(exchange, 400, "Invalid JSON format or data type");
+                        sendResponse(exchange, 400, "Invalid JSON format");
                     }
                 } else {
                     sendResponse(exchange, 400, "Missing ID parameter in URL query");
@@ -279,6 +281,10 @@ public class Server implements HttpHandler {
         }
     }
 
+    /**
+     * Feature 5: Weather Service Fetcher.
+     * Reaches out to local mock server and use DOM Parsing.
+     */
     private JSONObject getWeatherInfo(double latitude, double longitude) {
         HttpURLConnection conn = null;
         InputStream inputStream = null;
@@ -292,12 +298,12 @@ public class Server implements HttpHandler {
             
             inputStream = conn.getInputStream();
             DocumentBuilderFactory factory = DocumentBuilderFactory.newInstance();
+            // Ignore strict XML namespaces to safely parse changing payload tags
             factory.setNamespaceAware(true); 
             DocumentBuilder builder = factory.newDocumentBuilder();
             Document document = builder.parse(inputStream);
             
             JSONObject weatherInfo = new JSONObject();
-            
             NodeList names = document.getElementsByTagNameNS("*", "ParameterName");
             NodeList values = document.getElementsByTagNameNS("*", "ParameterValue");
             
@@ -322,6 +328,7 @@ public class Server implements HttpHandler {
         } catch (Exception e) {
             return null; 
         } finally {
+            // Strictly close resources to prevent socket exhaustion during bulk tests
             if (inputStream != null) {
                 try { inputStream.close(); } catch (IOException ignored) {}
             }
@@ -365,10 +372,11 @@ public class Server implements HttpHandler {
             HttpContext context = server.createContext("/datarecord", myServer); 
             context.setAuthenticator(authenticator);
 
-            // Collections Endpoint
+            // FEATURE 6: Map the collections endpoints and bind authentication
             HttpContext collectionsContext = server.createContext("/collections", new CollectionsHandler(myServer.db));
             collectionsContext.setAuthenticator(authenticator);
 
+            // FEATURE 4 Requirement: Multi-threaded request execution
             server.setExecutor(Executors.newCachedThreadPool());
             server.start();
             System.out.println("HTTPS Server has started on port 8001");

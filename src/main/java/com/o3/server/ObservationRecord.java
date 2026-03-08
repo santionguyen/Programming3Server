@@ -9,6 +9,9 @@ import java.time.format.DateTimeFormatter;
 import java.time.ZoneId;
 import java.time.ZoneOffset; 
 
+// This is the core data model for space observation
+// Parses incoming JSON, validates structures, and format ongoing JSON
+
 public class ObservationRecord {
     private String targetBodyName;
     private String centerBodyName;
@@ -23,11 +26,12 @@ public class ObservationRecord {
     private JSONObject orbitalElements;
     private JSONObject stateVector; 
     
-    // FEATURE 7 FIELDS
+    // ** FEATURE 7: Update metadata fields
     private String updateReason;
     private String edited;
 
     public ObservationRecord(JSONObject json) throws JSONException {
+        // Validate required string formats
         if (json.has("target_body_name") && !(json.get("target_body_name") instanceof String)) {
             throw new JSONException("target_body_name must be a string");
         }
@@ -43,6 +47,8 @@ public class ObservationRecord {
         this.epoch = json.optString("epoch", null);
         this.recordPayload = json.optString("record_payload", null);
 
+        // Extract orbital elements safely
+
         if (json.has("orbital_elements")) {
             JSONObject orbital = json.getJSONObject("orbital_elements");
             orbital.getDouble("semi_major_axis_au");
@@ -53,6 +59,8 @@ public class ObservationRecord {
             orbital.getDouble("mean_anomaly_deg");
             this.orbitalElements = orbital;
         }
+
+        // Extract state vector safely
 
         if (json.has("state_vector")) {
             JSONObject vector = json.getJSONObject("state_vector");
@@ -68,6 +76,7 @@ public class ObservationRecord {
             this.stateVector = vector;
         }
         
+        // Extract existing metadata if it shows up (useful for DB reads)
         if (json.has("metadata")) {
             JSONObject metadata = json.getJSONObject("metadata");
             this.id = metadata.optString("id");
@@ -80,6 +89,8 @@ public class ObservationRecord {
             if (metadata.has("edited")) this.edited = metadata.getString("edited");
         }
     }
+
+    // FEATURE 1 and 4 validation: Ensure minimum payload requirements and valid coordinates
 
     public boolean isValid() {
         if (targetBodyName == null || targetBodyName.isEmpty()) return false;
@@ -129,6 +140,8 @@ public class ObservationRecord {
     public JSONObject getOrbitalElements() { return this.orbitalElements; }
     public JSONObject getStateVector() { return this.stateVector; }
 
+    // Converts internal state back to API-compliant JSON format
+
     public JSONObject toJSON() {
         JSONObject json = new JSONObject();
         json.put("target_body_name", this.targetBodyName);
@@ -136,7 +149,8 @@ public class ObservationRecord {
         json.put("epoch", this.epoch);
         
         JSONObject metadata = new JSONObject();
-        
+
+        //FEATURE 6: ID must be stricly parsed as Integer (to pass automatic tests in Gitlab)
         if (this.id != null && !this.id.isEmpty()) {
             try {
                 metadata.put("id", Integer.parseInt(this.id));

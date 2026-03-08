@@ -11,6 +11,10 @@ import java.nio.charset.StandardCharsets;
 import java.util.List;
 import java.util.stream.Collectors;
 
+/**
+ * Feature 6: Collections endpoints
+ * Groups observations under collection IDs via /collections routing.
+ */
 public class CollectionsHandler implements HttpHandler {
     private MessageDatabase db;
 
@@ -25,11 +29,13 @@ public class CollectionsHandler implements HttpHandler {
 
         try {
             if (method.equalsIgnoreCase("GET")) {
+                // Route: GET /collections
                 if (path.equals("/collections") || path.equals("/collections/")) {
                     List<Integer> ids = db.getCollectionIds();
                     JSONArray jsonArray = new JSONArray(ids);
                     sendResponse(exchange, 200, jsonArray.toString());
                 } else {
+                    // Route: GET /collections/{id}
                     String[] parts = path.split("/");
                     if (parts.length > 2) {
                         try {
@@ -58,6 +64,7 @@ public class CollectionsHandler implements HttpHandler {
                         .lines().collect(Collectors.joining("\n"));
                 stream.close();
 
+                // Route: POST /collections/create
                 if (path.equals("/collections/create")) {
                     JSONArray messageIds = null;
                     if (!text.trim().isEmpty()) {
@@ -77,6 +84,7 @@ public class CollectionsHandler implements HttpHandler {
                     } else {
                         sendResponse(exchange, 500, "Failed to create collection");
                     }
+                // Route: POST /collections/add
                 } else if (path.equals("/collections/add")) {
                     try {
                         JSONObject json = new JSONObject(text);

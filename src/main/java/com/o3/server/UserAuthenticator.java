@@ -1,6 +1,9 @@
 package com.o3.server;
 import com.sun.net.httpserver.BasicAuthenticator;
 
+// Handle HTTP basic Authentication for protected endpoints
+// Integrated with datasae to verify credentials against stored users.
+
 public class UserAuthenticator extends BasicAuthenticator {
     private MessageDatabase db;
 
@@ -11,6 +14,7 @@ public class UserAuthenticator extends BasicAuthenticator {
 
     @Override
     public boolean checkCredentials(String username, String password) {
+        // Validates credentials for every protected GET/POST/PUT request.
         return db.validateUser(username, password);
     }
 
